@@ -199,12 +199,59 @@ int build_fd_set(fd_set *readfds) {
   return maxfd;
 }
 
+/*
+  Convert a string containing escape sequences into a byte string.
+  \xBB -> 0xBB (single byte with value BB)
+  \n -> 0x0a
+  \r -> 0x0d
+  \t -> 0x09
+  \\ -> \
+*/
+int parse_bytestring(const char *src, char *dst, int maxlen) {
+  int i = 0;
+  while (*src && i < maxlen) {
+    if (src[0] == '\\') {
+      switch(src[1]) {
+        case 'x': {
+          char hex[3] = {src[2], src[3], '\0'};
+          dst[i++] = (char)strtol(hex, NULL, 16);
+          src += 4;
+          break;
+        }
+        case 'n': dst[i++] = '\n'; src += 2; break;
+        case 'r': dst[i++] = '\r'; src += 2; break;
+        case 't': dst[i++] = '\t'; src += 2; break;
+        case '\\': dst[i++] = '\\'; src += 2; break;
+        default: dst[i++] = *src++; break;
+      }
+    } else {
+      dst[i++] = *src++;
+    }
+  }
+  return i;
+}
+
+/* Check if the rules provided by the config file are in the correct format */
+void validate_rule(const char *action, const char *pattern, const char *response, int n_line) {
+  if (action == NULL || action[0] == '\n') {
+    fprintf(stderr, "config: missing action\n");
+    exit(1);
+  }
+  
+  if (pattern == NULL || pattern[0] == '\0' || pattern[0] == '\n') {
+    fprintf(stderr, "config: missing pattern at line %d\n", n_line);
+    exit(1);
+  }
+  
+  if (strncmp(action, "reply", 5) == 0 && (response == NULL || response[0] == '\0' || response[0] == '\n')) {
+    fprintf(stderr, "config: action=reply but no response set");
+    exit(1);
+  }
+}
 
 /*
   This function loads rules from config.txt file, filling up the global blacklist.
   It also checks for allocation error.
-  
-  TODO: add support for binary strings.
 */
 void load_rules() {
   bl = malloc(sizeof(*bl));
@@ -220,12 +267,15 @@ void load_rules() {
 
   /* Read rules from file and fill the blacklist */
   char line[MAX_PATTERN_LEN];
+  int line_count = 1;
+  
   while (fgets(line, MAX_PATTERN_LEN, fp)) {
-    int len = atoi(strtok(line, ":"));
-    char *pattern = strtok(NULL, "\n");
-    if (pattern == NULL) continue;
-
-    /* Reallocate space if needed */
+    line[strcspn(line, "\n")] = '\0';
+    char *action = strtok(line, ":");
+    char *pattern = strtok(NULL, ":");
+    char *response = strtok(NULL, "\n");
+    validate_rule(action, pattern, response, line_count++);
+    /* Reallocate space for new rules if needed */
     if (bl->nrules == bl->capacity) {
       bl->capacity *= 2;
       rule **tmp = realloc(bl->rules, bl->capacity*sizeof(rule *));
@@ -237,22 +287,37 @@ void load_rules() {
     rule *r = malloc(sizeof(*r));
     if (r == NULL) {perror("malloc rule"); exit(1);}
     
-    r->len = len;
-    r->pattern = malloc(len+1 * sizeof(char));
+    /* Fill the pattern relative rule fields. */
+    r->pattern = malloc((r->len+1) * sizeof(char));
     if (r->pattern == NULL) {perror("malloc r->pattern"); exit(1);}
-    snprintf(r->pattern, MAX_PATTERN_LEN, "%s", pattern);
+    r->len = parse_bytestring(pattern, r->pattern, MAX_RESPONSE_LEN);
+
+    /* Parse the action-specific rule fields. */    
+    if (strncmp(action, "reply", 5) == 0 && response) {
+      r->response = malloc(MAX_RESPONSE_LEN * sizeof(char));
+      r->r_len = parse_bytestring(response, r->response, MAX_PATTERN_LEN);
+      r->action = ACTION_REPLY;
+    } else if (strncmp(action, "block", 5) == 0) {
+      r->action = ACTION_BLOCK;
+    } else if (strncmp(action, "drop", 4) == 0) {
+      r->action = ACTION_DROP;
+    } else {
+      fprintf(stderr, "config: unknown action %s\n", action);
+    }
+
     bl->rules[bl->nrules++] = r;
   }
   fclose(fp);
 }
 
-int is_forbidden(const char *buf) {
+/*Given a stream of data, return 0 if they do not violates the blacklist rules */
+rule *check_rules(const unsigned char *buf, int len) {
   for (int i = 0; i < bl->nrules; i++) {
-    if (strstr(buf, bl->rules[i]->pattern)) {
-      return -1;
+    if (memmem(buf, len, bl->rules[i]->pattern, bl->rules[i]->len)) {
+      return bl->rules[i];
     }
   }
-  return 0;
+  return NULL;
 }
 
 /*
@@ -262,15 +327,26 @@ int is_forbidden(const char *buf) {
   NOTE: int sender it isn't used at the moment, but it could be useful in future.
 */
 int relay(int src, int dst, int sender) {
-  char buf[MAX_READ_SIZE];
+  unsigned char buf[MAX_READ_SIZE];
   int n = read(src, buf, sizeof(buf)-1);
   
   if (n <= 0) return -1;
     
   buf[n] = '\0';
   
-  if (is_forbidden(buf)) return 0;  
-  
+  rule *r = check_rules(buf, n);  
+  if (r != NULL) {
+    switch (r->action) {
+      case ACTION_BLOCK:
+        return 0;
+      case ACTION_DROP:
+        return -1;
+      case ACTION_REPLY:
+        write(src, r->response, r->r_len);
+        return 0;
+    }
+  }
+
   int wrtn = 0;
   while (wrtn < n) {
     int w = write(dst, buf + wrtn, n - wrtn);

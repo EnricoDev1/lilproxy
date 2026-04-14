@@ -6,6 +6,7 @@
 #define CLIENT_SENDER 0
 #define TARGET_SENDER 1
 #define MAX_PATTERN_LEN 256
+#define MAX_RESPONSE_LEN 256
 #define MAX_READ_SIZE 0x1000
 
 typedef struct _PROXY_CONTENT {
@@ -21,9 +22,18 @@ typedef struct _PROXY_TARGET {
   int port;
 } proxyTarget;
 
+typedef enum _RULE_ACTION {
+  ACTION_BLOCK,
+  ACTION_REPLY,
+  ACTION_DROP
+} rule_action;
+
 typedef struct _RULE {
   int len;
-  char *pattern;  
+  int r_len;
+  rule_action action;
+  char *pattern;
+  char *response;
 } rule;
 
 typedef struct _BLACKLIST {
