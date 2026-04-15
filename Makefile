@@ -1,11 +1,12 @@
 CC := gcc
 
 all: proxy
-CFLAGS := -ggdb -O2 -Wall -W -std=c99
+CFLAGS := -ggdb -O2 -Wall -W -std=c99 -Iinclude -D_GNU_SOURCE
 TARGET := proxy
+SRC := src/main.c src/cli.c src/net.c src/rules.c src/proxy.c
 
-$(TARGET): main.c lib.c
-	$(CC) main.c lib.c -o $(TARGET) $(CFLAGS)
+$(TARGET): $(SRC)
+	$(CC) $(SRC) -o $(TARGET) $(CFLAGS)
 
 run: $(TARGET)
 	./$(TARGET)

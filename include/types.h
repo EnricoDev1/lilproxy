@@ -1,5 +1,7 @@
-#ifndef PROXY_LIB
-#define PROXY_LIB
+#ifndef PROXY_TYPES_H
+#define PROXY_TYPES_H
+
+#include <sys/select.h>
 
 #define MAX_CLIENTS 10
 #define ADDR_LEN 64
@@ -8,6 +10,10 @@
 #define MAX_PATTERN_LEN 256
 #define MAX_RESPONSE_LEN 256
 #define MAX_READ_SIZE 0x1000
+#define DEFAULT_INITIAL_CAP 20
+
+#define CONFIG_FILENAME "rules.txt"
+#define MAX_FILENAME_LEN 128
 
 typedef struct _PROXY_CONTENT {
   int serversock;
@@ -42,7 +48,4 @@ typedef struct _BLACKLIST {
   int capacity;
 } blacklist;
 
-int parse_port(const char *port);
-void parse_args(int argc, char *argv[], char *addr, int *r_port, int *l_port);
- 
 #endif
