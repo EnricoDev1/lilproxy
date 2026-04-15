@@ -97,7 +97,7 @@ static rule_action parse_action(const char *action) {
   if (strcmp(action, "reply") == 0) return ACTION_REPLY;
   if (strcmp(action, "block") == 0) return ACTION_BLOCK;
   if (strcmp(action, "drop") == 0) return ACTION_DROP;
-
+  
   fprintf(stderr, "config: unknown action %s\n", action);
   exit(1);
 }
@@ -131,10 +131,17 @@ void load_rules(const char *rules_file) {
     if (r == NULL) {perror("malloc rule"); exit(1);}
     
     /* Fill the pattern relative rule fields. */
-    r->pattern = malloc((r->len+1) * sizeof(char));
-    if (r->pattern == NULL) {perror("malloc r->pattern"); exit(1);}
-    r->len = parse_bytestring(pattern, r->pattern, MAX_RESPONSE_LEN);
     r->action = parse_action(action);
+
+    r->pattern = malloc((255) * sizeof(char));
+    if (r->pattern == NULL) {perror("malloc r->pattern"); exit(1);}
+    r->len = parse_bytestring(pattern, r->pattern, MAX_PATTERN_LEN);
+
+    if (r->action == ACTION_REPLY) {
+      r->response = malloc((255) * sizeof(char));
+      if (r->response == NULL) {perror("malloc r->response"); exit(1);}
+      r->r_len = parse_bytestring(response, r->response, MAX_RESPONSE_LEN);
+    }
     
     bl->rules[bl->nrules++] = r;
   }

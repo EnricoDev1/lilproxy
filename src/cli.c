@@ -31,7 +31,6 @@ void parse_args(int argc, char *argv[], char *addr, int *r_port, int *l_port, ch
 
   int idx = 0;
   int opt;
-
   
   snprintf(rules_file, MAX_FILENAME_LEN, "%s", "rules.txt");
   while((opt = getopt_long(argc, argv, "p:a:l:", long_opt, &idx)) != -1) {

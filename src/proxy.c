@@ -1,5 +1,3 @@
-#define _POSIX_C_SOURCE 200112L
-
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -8,6 +6,7 @@
 #include "net.h"
 #include "proxy.h"
 #include "rules.h"
+#include "types.h"
 
 proxyContext *ctx;
 proxyTarget *target;
@@ -61,8 +60,10 @@ int relay(int src, int dst, int sender) {
     
   buf[n] = '\0';
   
-  rule *r = check_rules(buf, n);  
-  if (r != NULL) {
+  rule *r = check_rules(buf, n);
+
+  /* block patterns only if they come from client */
+  if (r != NULL && sender == CLIENT_SENDER) {
     switch (r->action) {
       case ACTION_BLOCK:
         return 0;
