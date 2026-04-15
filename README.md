@@ -1,7 +1,7 @@
 # simple-tcp-proxy
 A simple tcp proxy written in C.
 
-You can add rules in `config.txt` with this format: `<action>:<pattern>[:<response>]`
+You can add rules in `rules.txt` with this format: `<action>:<pattern>[:<response>]`
 - action: what to do when the pattern is matched:
   - block: drop the packet keeping connection alive
   - drop: close the connection
