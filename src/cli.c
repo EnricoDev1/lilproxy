@@ -23,8 +23,8 @@ int parse_port(const char *port) {
 /* Parse command line args: target ADDRESS and PORT */
 void parse_args(int argc, char *argv[]) {
   static struct option long_opt[] = {
-    {"remote-port", required_argument, 0, 'p'},
-    {"remote-addr", required_argument, 0, 'a'},
+    {"target-port", required_argument, 0, 't'},
+    {"target-addr", required_argument, 0, 'a'},
     {"port", required_argument, 0, 'l'},
     {"rules", optional_argument, 0, 'r'},
     {0, 0, 0, 0}
@@ -34,7 +34,7 @@ void parse_args(int argc, char *argv[]) {
   int opt;
   
   snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", "rules.txt");
-  while((opt = getopt_long(argc, argv, "p:a:l:", long_opt, &idx)) != -1) {
+  while((opt = getopt_long(argc, argv, "t:a:l:", long_opt, &idx)) != -1) {
     switch(opt) {
       case 'p':
         cfg->r_port = parse_port(optarg);

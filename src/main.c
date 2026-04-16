@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
   parse_args(argc, argv);
     
   if (cfg->l_port == 0) {
-    fprintf(stderr, "Usage: %s -l <local-port> -a <remote-addr> -p <remote-port> [-r <config-file>]", argv[0]);
+    fprintf(stderr, "Usage: %s -l <local-port> -a <target-addr> -p <target-port> [-r <config-file>]", argv[0]);
     exit(1);
   }
 
