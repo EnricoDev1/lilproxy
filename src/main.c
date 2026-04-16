@@ -2,28 +2,27 @@
 #include <stdlib.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 #include "cli.h"
 #include "net.h"
 #include "proxy.h"
 #include "rules.h"
 #include "state.h"
+#include "commands.h"
 
 int main(int argc, char *argv[]) {
-  char addr[ADDR_LEN];
-  char config_file[256];
-  int r_port = 0, l_port = 0;
-
-  parse_args(argc, argv, addr, &r_port, &l_port, config_file);
-
-  if (l_port == 0) {
+  cfg = cfg_init();
+  parse_args(argc, argv);
+    
+  if (cfg->l_port == 0) {
     fprintf(stderr, "Usage: %s -l <local-port> -a <remote-addr> -p <remote-port> [-r <config-file>]", argv[0]);
     exit(1);
   }
-  
-  connection_init(l_port);
-  proxy_init(addr, r_port);
-  load_rules(config_file);
+
+  connection_init();
+  proxy_init();
+  load_rules();
     
   struct timeval tv;
   fd_set readfds;
@@ -45,6 +44,11 @@ int main(int argc, char *argv[]) {
       /* A new client wants to connect. */
       if (FD_ISSET(ctx->serversock, &readfds)) {
         accept_client();
+      }
+
+      /* We received something from stdin */
+      if (FD_ISSET(STDIN_FILENO, &readfds)) {
+        read_command();
       }
 
       /* For each active session, relay data in both directions. */

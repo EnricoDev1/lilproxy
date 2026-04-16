@@ -6,6 +6,7 @@
 
 #include "cli.h"
 #include "types.h"
+#include "state.h"
 
 /* Safe parse port from string to int. */
 int parse_port(const char *port) {
@@ -20,7 +21,7 @@ int parse_port(const char *port) {
 }
 
 /* Parse command line args: target ADDRESS and PORT */
-void parse_args(int argc, char *argv[], char *addr, int *r_port, int *l_port, char *rules_file) {
+void parse_args(int argc, char *argv[]) {
   static struct option long_opt[] = {
     {"remote-port", required_argument, 0, 'p'},
     {"remote-addr", required_argument, 0, 'a'},
@@ -28,24 +29,24 @@ void parse_args(int argc, char *argv[], char *addr, int *r_port, int *l_port, ch
     {"rules", optional_argument, 0, 'r'},
     {0, 0, 0, 0}
   };
-
+  
   int idx = 0;
   int opt;
   
-  snprintf(rules_file, MAX_FILENAME_LEN, "%s", "rules.txt");
+  snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", "rules.txt");
   while((opt = getopt_long(argc, argv, "p:a:l:", long_opt, &idx)) != -1) {
     switch(opt) {
       case 'p':
-        *r_port = parse_port(optarg);
+        cfg->r_port = parse_port(optarg);
         break;
       case 'a':
-        snprintf(addr, ADDR_LEN, "%s", optarg);
+        snprintf(cfg->addr, ADDR_LEN, "%s", optarg);
         break;
       case 'l':
-        *l_port = parse_port(optarg);
+        cfg->l_port = parse_port(optarg);
         break;
       case 'r':
-        snprintf(rules_file, MAX_FILENAME_LEN, "%s", optarg);
+        snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", optarg);
         break;
       case '?':
         exit(1);

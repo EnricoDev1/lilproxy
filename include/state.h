@@ -6,5 +6,6 @@
 extern proxyContext *ctx;
 extern proxyTarget *target;
 extern blacklist *bl;
+extern appConfig *cfg;
 
 #endif

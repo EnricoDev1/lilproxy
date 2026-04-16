@@ -1,8 +1,8 @@
 #include <unistd.h>
-
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #include "rules.h"
 #include "types.h"
@@ -38,53 +38,110 @@ void *init_blacklist(int initial_cap) {
   \r -> 0x0d
   \t -> 0x09
   \\ -> \
+  Returns len >= 0, -1 escape error, -2 too long.
 */
-int parse_bytestring(const char *src, char *dst, int maxlen) {
-  int i = 0;
-  while (*src && i < maxlen) {
-    if (src[0] == '\\') {
-      switch(src[1]) {
-        case 'x': {
-          char hex[3] = {src[2], src[3], '\0'};
-          dst[i++] = (char)strtol(hex, NULL, 16);
-          src += 4;
-          break;
-        }
-        case 'n': dst[i++] = '\n'; src += 2; break;
-        case 'r': dst[i++] = '\r'; src += 2; break;
-        case 't': dst[i++] = '\t'; src += 2; break;
-        case '\\': dst[i++] = '\\'; src += 2; break;
-        default: dst[i++] = *src++; break;
-      }
-    } else {
-      dst[i++] = *src++;
-    }
-  }
-  return i;
+int parse_bytestring(const char *src, char *dst, int cap) {
+   int i = 0;
+   while (*src) {
+     if (i >= cap - 1) return -2;
+ 
+     if (src[0] == '\\') {
+       if (src[1] == '\0') return -1;
+       switch (src[1]) {
+         case 'n': dst[i++] = '\n'; src += 2; break;
+         case 'r': dst[i++] = '\r'; src += 2; break;
+         case 't': dst[i++] = '\t'; src += 2; break;
+         case '\\': dst[i++] = '\\'; src += 2; break;
+         case 'x': {
+           if (!isxdigit(src[2]) || !isxdigit(src[3])) return -1;
+           char hex[3] = { src[2], src[3], '\0' };
+           dst[i++] = (char)strtol(hex, NULL, 16);
+           src += 4;
+           break;
+         }
+         default:
+           return -1;
+       }
+     } else {
+       dst[i++] = *src++;
+     }
+   }
+   dst[i] = '\0';
+   return i;
+ }
+
+void rule_free(rule *r) {
+  if(!r) return;
+  free(r->pattern);
+  free(r->response);
+  free(r);
 }
 
-/* Check if the rules provided by the config file are in the correct format */
-int validate_rule(const char *action, const char *pattern, const char *response, int n_line) {
-  if (action == NULL || action[0] == '\n') {
-    fprintf(stderr, "config: missing action\n");
-    return -1;
-  }
+/* This helper function return the corresponding ACTION_VALUE given an action string. */
+rule_action parse_action(const char *action) {
+  if (strcmp(action, "reply") == 0) return ACTION_REPLY;
+  if (strcmp(action, "block") == 0) return ACTION_BLOCK;
+  if (strcmp(action, "drop") == 0) return ACTION_DROP;
+  return ACTION_NONE;
+}
+
+/*
+  This function safe-copy the error string from msg into err.
+  This is used to handle errors in different ways based on the caller of rule_parse_line.
+*/
+static void build_error(char *err, char *msg) {
+  if (err == NULL) return;
+  snprintf(err, ERROR_LEN, "%s", msg);
+}
+
+/*
+  This function receives in input the stdin-readed line, 
+*/
+int rule_parse_line(const char *line, rule **out_rule, char *err) {
+  char tmp[512];   
+  char *action, *pattern, *response;
+  rule *r;
   
-  if (pattern == NULL || pattern[0] == '\0' || pattern[0] == '\n') {
-    fprintf(stderr, "config: missing pattern at line %d\n", n_line);
-    return -1;
+  if (!line || !*line) { build_error(err, "empty rule\n"); return -1; }
+  snprintf(tmp, sizeof(tmp), "%s", line);
+  tmp[strcspn(tmp, "\n")] = '\0';
+
+  action = strtok(tmp, ":");
+  pattern = strtok(NULL, ":");
+  response = strtok(NULL, "");
+
+  if (!action) { build_error(err, "missing action\n"); return -1; }
+
+  rule_action a = parse_action(action);
+  if (a == ACTION_NONE) { build_error(err, "unknown action\n"); return -1; }
+  if (a == ACTION_REPLY && (!response || !*response)) { build_error(err, "reply needs a response\n"); return -1; }
+
+  if (!pattern || !*pattern) { build_error(err, "missing pattern\n"); return -1; }
+  r = calloc(1, sizeof(*r));
+  if (r == NULL) return -1;
+  r->action = a;
+  r->pattern = malloc(MAX_PATTERN_LEN);
+  if (r->pattern == NULL) {return -1;}
+
+  int plen = parse_bytestring(pattern, r->pattern, MAX_PATTERN_LEN);
+  if (plen < 0) { rule_free(r); build_error(err, plen == -1 ? "invalid escape\n" : "pattern too long\n"); return -1; }
+  r->len = plen;
+
+  if (a == ACTION_REPLY) {
+    r->response = malloc(MAX_RESPONSE_LEN);
+    if (r->response == NULL) { rule_free(r); return -1; }
+
+    int rlen = parse_bytestring(response, r->response, MAX_RESPONSE_LEN);
+    if (rlen < 0) { rule_free(r); build_error(err, rlen == -1 ? "invalid escape\n" : "response too long\n"); return -1; }
   }
-  
-  if (strncmp(action, "reply", 5) == 0 && (response == NULL || response[0] == '\0' || response[0] == '\n')) {
-    fprintf(stderr, "config: action=reply but no response set");
-    return -1;
-  }
+  *out_rule = r;  
   return 0;
 }
+
 /*
   This function reallocate space for rules inside the blacklist struct,
   doubling its capacity.
- */
+*/
 void reallocate_rules() {
   bl->capacity *= 2;
   rule **tmp = realloc(bl->rules, bl->capacity*sizeof(rule *));
@@ -92,65 +149,47 @@ void reallocate_rules() {
   bl->rules = tmp;
 }
 
-/* This helper function return the corresponding ACTION_VALUE given an action string. */
-static rule_action parse_action(const char *action) {
-  if (strcmp(action, "reply") == 0) return ACTION_REPLY;
-  if (strcmp(action, "block") == 0) return ACTION_BLOCK;
-  if (strcmp(action, "drop") == 0) return ACTION_DROP;
-  
-  fprintf(stderr, "config: unknown action %s\n", action);
-  exit(1);
+/* This function append a given rule to the blacklist, allocating more space if needed. */
+void add_rule_to_bl(rule *r) {
+  if (bl->nrules == bl->capacity)
+    reallocate_rules();
+  bl->rules[bl->nrules++] = r;
 }
 
 /*
   This function loads rules from config.txt file, filling up the global blacklist.
   It also checks for allocation error.
 */
-void load_rules(const char *rules_file) {
+void load_rules() {
   bl = init_blacklist(DEFAULT_INITIAL_CAP);
 
-  FILE *fp = fopen(rules_file, "r");
+  FILE *fp = fopen(cfg->rules_file, "r");
   if (fp == NULL) {perror("Error while opening rules file"); exit(1);}
 
   /* Read rules from file and fill the blacklist */
   char line[MAX_PATTERN_LEN];
-  int line_count = 1;
-  
+  int lcount = 1;
+  char err[ERROR_LEN];
   while (fgets(line, MAX_PATTERN_LEN, fp)) {
-    line[strcspn(line, "\n")] = '\0';
-    char *action = strtok(line, ":");
-    char *pattern = strtok(NULL, ":");
-    char *response = strtok(NULL, "\n");
-    if (validate_rule(action, pattern, response, line_count++) == -1) exit(1);
+    rule *r = NULL;
 
-    if (bl->nrules == bl->capacity) 
-      reallocate_rules();
-
-    /* Create new rule and append it to blacklist. */
-    rule *r = malloc(sizeof(*r));
-    if (r == NULL) {perror("malloc rule"); exit(1);}
-    
-    /* Fill the pattern relative rule fields. */
-    r->action = parse_action(action);
-
-    r->pattern = malloc((255) * sizeof(char));
-    if (r->pattern == NULL) {perror("malloc r->pattern"); exit(1);}
-    r->len = parse_bytestring(pattern, r->pattern, MAX_PATTERN_LEN);
-
-    if (r->action == ACTION_REPLY) {
-      r->response = malloc((255) * sizeof(char));
-      if (r->response == NULL) {perror("malloc r->response"); exit(1);}
-      r->r_len = parse_bytestring(response, r->response, MAX_RESPONSE_LEN);
+    if (rule_parse_line(line, &r, err) == -1) {
+      ERR("error at %s:%d - %s\n", cfg->rules_file, lcount, err);
+      exit(1);
     }
-    
-    bl->rules[bl->nrules++] = r;
+
+    add_rule_to_bl(r);
+    lcount++;
   }
   fclose(fp);
 }
 
-/*Given a stream of data, return 0 if they do not violates the blacklist rules */
+/* Given a stream of data, return 0 if they do not violates the blacklist rules */
 rule *check_rules(const unsigned char *buf, int len) {
   for (int i = 0; i < bl->nrules; i++) {
+    if (bl->rules[i] == NULL) {
+      exit(1);
+    }
     if (memmem(buf, len, bl->rules[i]->pattern, bl->rules[i]->len)) {
       return bl->rules[i];
     }

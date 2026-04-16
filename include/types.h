@@ -3,17 +3,27 @@
 
 #include <sys/select.h>
 
-#define MAX_CLIENTS 10
+#define MAX_CLIENTS 100
 #define ADDR_LEN 64
 #define CLIENT_SENDER 0
 #define TARGET_SENDER 1
 #define MAX_PATTERN_LEN 256
-#define MAX_RESPONSE_LEN 256
-#define MAX_READ_SIZE 0x1000
+#define MAX_RESPONSE_LEN 4096
+#define MAX_READ_SIZE 4096
 #define DEFAULT_INITIAL_CAP 20
+#define ERROR_LEN 128
 
 #define CONFIG_FILENAME "rules.txt"
 #define MAX_FILENAME_LEN 128
+
+#define ERR(...) fprintf(stderr, __VA_ARGS__)
+
+typedef struct _APP_CONFIG {
+  char *rules_file;
+  int l_port;
+  int r_port;
+  char addr[ADDR_LEN];
+} appConfig;
 
 typedef struct _PROXY_CONTENT {
   int serversock;
@@ -31,7 +41,8 @@ typedef struct _PROXY_TARGET {
 typedef enum _RULE_ACTION {
   ACTION_BLOCK,
   ACTION_REPLY,
-  ACTION_DROP
+  ACTION_DROP,
+  ACTION_NONE
 } rule_action;
 
 typedef struct _RULE {

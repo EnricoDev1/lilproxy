@@ -144,7 +144,7 @@ int build_fd_set(fd_set *readfds) {
   FD_SET(ctx->serversock, readfds);
   
   /* This allows us to interact with the program */
-  // FD_SET(STDIN_FILENO, readfds); 
+  FD_SET(STDIN_FILENO, readfds); 
   
   for (int i = 0; i < ctx->numclients; i++) {
     if (ctx->clients[i] > 0) FD_SET(ctx->clients[i], readfds);

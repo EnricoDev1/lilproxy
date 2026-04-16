@@ -11,26 +11,43 @@
 proxyContext *ctx;
 proxyTarget *target;
 blacklist *bl;
+appConfig *cfg;
 
 /* Allocate the proxy context struct with error handling */ 
-void *ctx_malloc(size_t size) {
-  void *ptr = malloc(size);
-  if (ptr == NULL) {
-    perror("Memory error while malloc");
+proxyContext *ctx_malloc() {
+  proxyContext *ctx = malloc(sizeof(*ctx));
+  if (ctx == NULL) {
+    perror("malloc ctx");
     exit(1);
   }
-  return ptr;
+  return ctx;
+}
+
+appConfig *cfg_init() {
+  appConfig *cfg = malloc(sizeof(*cfg));
+
+  if (cfg == NULL) {
+    perror("malloc cfg");
+    exit(1);
+  }
+
+  cfg->rules_file = malloc(MAX_FILENAME_LEN * sizeof(char));
+  if (cfg->rules_file == NULL) {
+    perror("malloc cfg->rules_file");
+    exit(1);
+  }
+  return cfg;
 }
 
 /* Initialize the proxy context to default values. */
-void connection_init(int port) {
-  ctx = ctx_malloc(sizeof(*ctx));
+void connection_init() {
+  ctx = ctx_malloc();
   memset(ctx, 0, sizeof(*ctx));
   
   /* we don't have any client connected yet */
   ctx->numclients = 0;
   ctx->maxclient = -1; 
-  ctx->serversock = server_init(port); 
+  ctx->serversock = server_init(cfg->l_port); 
   
   if (ctx->serversock == -1) {
     perror("Creating listening socket");
@@ -39,11 +56,11 @@ void connection_init(int port) {
 }
 
 /* Initialize proxy state with values received from command line. */
-void proxy_init(const char *addr, int port) {
+void proxy_init() {
   target = malloc(sizeof(*target));
   memset(target, 0, sizeof(*target));
-  snprintf(target->addr, ADDR_LEN, "%s", addr);
-  target->port = port;
+  snprintf(target->addr, ADDR_LEN, "%s", cfg->addr);
+  target->port = cfg->r_port;
 }
 
 /*
@@ -71,6 +88,8 @@ int relay(int src, int dst, int sender) {
         return -1;
       case ACTION_REPLY:
         write(src, r->response, r->r_len);
+        return 0;
+      case ACTION_NONE:
         return 0;
     }
   }

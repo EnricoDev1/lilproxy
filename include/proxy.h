@@ -4,10 +4,12 @@
 #include <stddef.h>
 
 #include "state.h"
+#include "types.h"
 
-void *ctx_malloc(size_t size);
-void connection_init(int port);
-void proxy_init(const char *addr, int port);
+proxyContext *ctx_malloc();
+appConfig *cfg_init();
+void connection_init();
+void proxy_init();
 int relay(int src, int dst, int sender);
 
 #endif
