@@ -7,6 +7,14 @@
 #include "rules.h"
 #include "types.h"
 
+/* Free a rule struct and its fields */
+void rule_free(rule *r) {
+  if(!r) return;
+  free(r->pattern);
+  free(r->response);
+  free(r);
+}
+
 /*
   This function inits the blacklist struct, allocating needed space
   and setting default values. It also performs error handling.
@@ -70,13 +78,6 @@ int parse_bytestring(const char *src, char *dst, int cap) {
    return i;
  }
 
-void rule_free(rule *r) {
-  if(!r) return;
-  free(r->pattern);
-  free(r->response);
-  free(r);
-}
-
 /* This helper function return the corresponding ACTION_VALUE given an action string. */
 rule_action parse_action(const char *action) {
   if (strcmp(action, "reply") == 0) return ACTION_REPLY;
@@ -86,7 +87,7 @@ rule_action parse_action(const char *action) {
 }
 
 /*
-  This function safe-copy the error string from msg into err.
+  This local function safe-copy the error string from msg into err.
   This is used to handle errors in different ways based on the caller of rule_parse_line.
 */
 static void build_error(char *err, char *msg) {
@@ -95,7 +96,10 @@ static void build_error(char *err, char *msg) {
 }
 
 /*
-  This function receives in input the stdin-readed line, 
+  This function parses the stdin-readed line into the corresponding out_rule object.
+  The input is expected to have the format: action:pattern:[response].
+  On success: allocates and initialize the rule struct, storing the value in *out_rule and returning 0.
+  On error:   writes the error message inside 'err', free allocated memory and returns -1.
 */
 int rule_parse_line(const char *line, rule **out_rule, char *err) {
   char tmp[512];   
