@@ -6,7 +6,6 @@
 #include "state.h"
 #include "types.h"
 
-proxyContext *ctx_malloc();
 appConfig *cfg_init();
 void connection_init();
 void proxy_init();

@@ -42,7 +42,7 @@ int server_init(int port) {
   This function stops read/write/connect from being blocking: if there's not ready data they set errno = EAGAIN.
   It also prevents TCP from "packing" data, reduce delay. 
 */
-int socketSetNonBlockNoDelay(int fd) {
+static int socketSetNonBlockNoDelay(int fd) {
   int flags;
   int y = 1;
 
@@ -61,7 +61,7 @@ int socketSetNonBlockNoDelay(int fd) {
   
   Returns -1 on error, socket file descriptor used for connection to the remote server on success.
 */
-int TCPConnect(const char *addr, int port, int nonblock) {
+static int TCPConnect(const char *addr, int port, int nonblock) {
   struct addrinfo hints, *servinfo, *p;
   char portstr[6];
   int fd, retval = -1;

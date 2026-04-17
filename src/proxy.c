@@ -14,7 +14,7 @@ blacklist *bl;
 appConfig *cfg;
 
 /* Allocate the proxy context struct with error handling */ 
-proxyContext *ctx_malloc() {
+static proxyContext *ctx_malloc() {
   proxyContext *ctx = malloc(sizeof(*ctx));
   if (ctx == NULL) {
     perror("malloc ctx");
@@ -60,7 +60,7 @@ void proxy_init() {
   target = malloc(sizeof(*target));
   memset(target, 0, sizeof(*target));
   snprintf(target->addr, ADDR_LEN, "%s", cfg->addr);
-  target->port = cfg->r_port;
+  target->port = cfg->t_port;
 }
 
 /*

@@ -21,7 +21,7 @@
 typedef struct _APP_CONFIG {
   char *rules_file;
   int l_port;
-  int r_port;
+  int t_port;
   char addr[ADDR_LEN];
 } appConfig;
 

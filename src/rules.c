@@ -8,7 +8,7 @@
 #include "types.h"
 
 /* Free a rule struct and its fields */
-void rule_free(rule *r) {
+static void rule_free(rule *r) {
   if(!r) return;
   free(r->pattern);
   free(r->response);
@@ -19,7 +19,7 @@ void rule_free(rule *r) {
   This function inits the blacklist struct, allocating needed space
   and setting default values. It also performs error handling.
 */
-void *init_blacklist(int initial_cap) {
+static void *init_blacklist(int initial_cap) {
   blacklist *bl = malloc(sizeof(*bl));
   if (bl == NULL) {
     perror("malloc bl");
@@ -48,7 +48,7 @@ void *init_blacklist(int initial_cap) {
   \\ -> \
   Returns len >= 0, -1 escape error, -2 too long.
 */
-int parse_bytestring(const char *src, char *dst, int cap) {
+static int parse_bytestring(const char *src, char *dst, int cap) {
    int i = 0;
    while (*src) {
      if (i >= cap - 1) return -2;
@@ -79,7 +79,7 @@ int parse_bytestring(const char *src, char *dst, int cap) {
  }
 
 /* This helper function return the corresponding ACTION_VALUE given an action string. */
-rule_action parse_action(const char *action) {
+static rule_action parse_action(const char *action) {
   if (strcmp(action, "reply") == 0) return ACTION_REPLY;
   if (strcmp(action, "block") == 0) return ACTION_BLOCK;
   if (strcmp(action, "drop") == 0) return ACTION_DROP;
@@ -146,7 +146,7 @@ int rule_parse_line(const char *line, rule **out_rule, char *err) {
   This function reallocate space for rules inside the blacklist struct,
   doubling its capacity.
 */
-void reallocate_rules() {
+static void reallocate_rules() {
   bl->capacity *= 2;
   rule **tmp = realloc(bl->rules, bl->capacity*sizeof(rule *));
   if (tmp == NULL) { perror("realloc bl->rules"); exit(1); }

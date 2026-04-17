@@ -4,7 +4,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include "cli.h"
+#include "args.h"
 #include "net.h"
 #include "proxy.h"
 #include "rules.h"
@@ -23,7 +23,10 @@ int main(int argc, char *argv[]) {
   connection_init();
   proxy_init();
   load_rules();
-    
+  if (set_raw_mode(STDIN_FILENO, 1) == -1) {
+    perror("set_raw_mode");
+    exit(1);
+  }
   struct timeval tv;
   fd_set readfds;
   

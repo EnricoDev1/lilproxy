@@ -2,14 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
-#include <string.h>
 
-#include "cli.h"
+#include "args.h"
 #include "types.h"
 #include "state.h"
 
 /* Safe parse port from string to int. */
-int parse_port(const char *port) {
+static int parse_port(const char *port) {
   char *end;
   long val = strtol(port, &end, 10);
 
@@ -36,8 +35,8 @@ void parse_args(int argc, char *argv[]) {
   snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", "rules.txt");
   while((opt = getopt_long(argc, argv, "t:a:l:", long_opt, &idx)) != -1) {
     switch(opt) {
-      case 'p':
-        cfg->r_port = parse_port(optarg);
+      case 't':
+        cfg->t_port = parse_port(optarg);
         break;
       case 'a':
         snprintf(cfg->addr, ADDR_LEN, "%s", optarg);
