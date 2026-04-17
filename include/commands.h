@@ -2,6 +2,7 @@
 #define _COMMAND_H
 
 #define CMD_MAX 256
+#define HISTORY_LEN 30
 
 struct cmdBuffer {
   char cmd[CMD_MAX];

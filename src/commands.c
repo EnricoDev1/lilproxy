@@ -9,7 +9,19 @@
 #include "types.h"
 #include "commands.h"
 
+#define CTRL_KEY(k) ((k) & 0x1f)
+#define ARROW_KEY(k) ((k) >= ARROW_LEFT && (k) <= ARROW_DOWN)
+
+enum specialKeys {
+  ARROW_LEFT = 1000,
+  ARROW_RIGHT,
+  ARROW_UP,
+  ARROW_DOWN
+};
+
 struct cmdBuffer cb;
+static struct cmdBuffer *history[HISTORY_LEN];
+static size_t h_len = 0;
 
 /* Append a char to the cmd buffer if there's enough space. */
 static void cb_append(char c) {
@@ -43,10 +55,14 @@ static void cursor_at_line_start() {
   write(STDOUT_FILENO, "\r", 1);
 }
 
-static void redraw_prompt() {
+static void draw_prompt() {
   cursor_at_line_start();
   clear_cur_line();
   write(STDOUT_FILENO, "❯ ", 4);
+}
+
+static void redraw_prompt() {
+  draw_prompt();
   if (cb.len > 0) {
     write(STDOUT_FILENO, cb.cmd, cb.len);
   }
@@ -137,32 +153,73 @@ void disable_raw_mode_at_exit(void) {
   set_raw_mode(STDIN_FILENO, 0);
 }
 
+static void history_add_cmd() {
+  history[h_len] = malloc(sizeof(cb));
+  strncpy(history[h_len]->cmd, cb.cmd, cb.len);
+  history[h_len]->len = cb.len;
+  h_len = (h_len+1)%HISTORY_LEN;
+} 
+
+int read_key() {
+  int nread;
+  char c;
+
+  while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+    if (nread == -1) {ERR("read"); exit(1);}
+  }
+  
+  /* Parse escape sequence. */
+  if (c == '\x1b') {
+    char seq[3];
+    if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+    if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+    if (seq[0] == '[') {
+      switch (seq[1]) {
+        case 'A': return ARROW_UP;
+        case 'B': return ARROW_DOWN;
+        case 'C': return ARROW_RIGHT;
+        case 'D': return ARROW_LEFT;
+      }
+    }
+    return '\x1b';
+  }
+  
+  return c;
+}
+
 /* This function reads from stdin, handling one command line in VT100 raw mode. */
 int read_command() {
-  char ch;
+  int ch = read_key();
   
-  while (read(STDIN_FILENO, &ch, 1) == 1) {
-    if (ch == '\r' || ch == '\n') {
-      cb.cmd[cb.len] = '\0';
-      write(STDOUT_FILENO, "\r\n", 2);
-      parse_command(cb.cmd);
-      cb_clear();
+  if (ch == '\r' || ch == '\n') {
+    cb.cmd[cb.len] = '\0';
+    write(STDOUT_FILENO, "\r\n", 2);
+    parse_command(cb.cmd);
+    history_add_cmd();
+    cb_clear();
+    redraw_prompt();
+  }
+
+  if (ch == 127 || ch == '\b') {
+    if (cb.len > 0) {
+      cb_del();
       redraw_prompt();
-      continue;
     }
+  }
 
-    if (ch == 127 || ch == '\b') {
-      if (cb.len > 0) {
-        cb_del();
-        redraw_prompt();
-      }
-      continue;
-    }
+  if (isprint((unsigned char)ch) && cb.len < CMD_MAX - 1) {
+    cb_append(ch);
+    write(STDOUT_FILENO, &ch, 1);
+  }
 
-    if (isprint((unsigned char)ch) && cb.len < CMD_MAX - 1) {
-      cb_append(ch);
-      write(STDOUT_FILENO, &ch, 1);
-    }
+  if (ch == CTRL_KEY('w')) {
+    draw_prompt();
+    cb_clear();
+  }
+
+  if (ch == CTRL_KEY('l')) {
+    clear_screen();
+    draw_prompt();
   }
 
   return 0;
