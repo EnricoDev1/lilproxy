@@ -12,12 +12,19 @@
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define ARROW_KEY(k) ((k) >= ARROW_LEFT && (k) <= ARROW_DOWN)
+#define PROMPT_CHAR ">"
 
 enum specialKeys {
   ARROW_LEFT = 1000,
   ARROW_RIGHT,
   ARROW_UP,
-  ARROW_DOWN
+  ARROW_DOWN,
+  DEL_KEY
+};
+
+struct commandEntry {
+  char *name;
+  void (*callback)(void);
 };
 
 struct cmdBuffer cb;
@@ -25,18 +32,20 @@ static struct cmdBuffer *history[HISTORY_LEN];
 static size_t h_len = 0;
 static size_t h_pos = 0;
 
+static struct commandEntry commands[10];
+static int commands_len = 0;
+
 /* ========================== "TUI" setup ========================== */
 void disable_raw_mode_at_exit(void);
 static void cb_clear();
-static void redraw_prompt();
+static void draw_prompt_buf();
 
 int set_raw_mode(int fd, int enable) {
   static struct termios g_orig_term;
   static int raw_mode_on = 0;
-  static int atexit_reg = 0;
-  
+  static int atexit_reg = 0;  
   struct termios raw;
-  struct cmdBuffer buf;
+  
   if (enable == 0) {
     if (raw_mode_on && tcsetattr(fd, TCSAFLUSH, &g_orig_term) == 0) {
       raw_mode_on = 0;
@@ -66,7 +75,7 @@ int set_raw_mode(int fd, int enable) {
 
   raw_mode_on = 1;
   cb_clear();
-  redraw_prompt();
+  draw_prompt_buf();
   return 0;
 }
 
@@ -89,10 +98,10 @@ static void cursor_at_line_start() {
 static void draw_prompt() {
   cursor_at_line_start();
   clear_cur_line();
-  write(STDOUT_FILENO, "❯ ", 4);
+  write(STDOUT_FILENO, PROMPT_CHAR" ", 2);
 }
 
-static void redraw_prompt() {
+static void draw_prompt_buf() {
   draw_prompt();
   if (cb.len > 0) {
     write(STDOUT_FILENO, cb.cmd, cb.len);
@@ -103,7 +112,7 @@ static void redraw_prompt() {
 /* This function adds the current buffer content to the history when a command is sent. */
 static void history_add_cmd() {
   if (h_len > 0 && (strcmp(history[h_len-1]->cmd, cb.cmd) == 0)) return;
-
+  
   if (history[h_len] != NULL) free(history[h_len]);
   history[h_len] = malloc(sizeof(struct cmdBuffer));
   if (history[h_len] == NULL) {perror("malloc history[h_len]"); exit(1);}
@@ -164,42 +173,70 @@ static void update_cb_history(struct cmdBuffer *buf) {
 static void print_rules() {
   for (int i = 0; i < bl->nrules; i++) {
     rule *r = bl->rules[i];
-    if (r->action == ACTION_REPLY) printf("reply:%s:%s\n", r->pattern, r->response);
-    else if (r->action == ACTION_BLOCK) printf("block:%s\n", r->pattern);
-    else if (r->action == ACTION_DROP) printf("drop:%s\n", r->pattern);
+    if (r->action == ACTION_REPLY) printf("reply:%s:%s\r\n", r->pattern, r->response);
+    else if (r->action == ACTION_BLOCK) printf("block:%s\r\n", r->pattern);
+    else if (r->action == ACTION_DROP) printf("drop:%s\r\n", r->pattern);
   }
+  fflush(stdout);
+}
+
+static void print_help() {
+  printf("\e[1mAvaible commands:\e[m\r\n");
+  printf("- lsrules: list current blacklist\r\n");
+  printf("- addrule <action>:<pattern>:[<response>]: add a new rule to the blacklist\r\n");
+  printf("- clear: clear screen\r\n");
+  printf("- exit: exit program\r\n");
+  
+  fflush(stdout);  
+}
+
+static void add_rule() {
+  char err[ERROR_LEN];
+  rule *r = NULL;
+  char *args = cb.cmd + 8;
+
+  if (rule_parse_line(args, &r, err) == -1) {
+    ERR("error: %s", err);
+    return;
+  }
+
+  add_rule_to_bl(r);
+  printf("[+] Rule successfully added\r\n");
+  return;
+}
+
+static void add_command(char *command_name, void (*callback)(void)) {
+  commands[commands_len].name = command_name;  
+  commands[commands_len].callback = callback;
+  commands_len++;
+}
+
+void commands_init() {
+  add_command("addrule", add_rule);
+  add_command("lsrules", print_rules);
+  add_command("clear", clear_screen);
+  add_command("help", print_help);
+}
+
+
+static void exec_command(const char *command) {
+  for(int i = 0; i < commands_len; i++) {
+    if (strcmp(command, commands[i].name) == 0) {
+      commands[i].callback();
+      return;
+    }
+  }
+}
+
+static void parse_command() {
+  char *cmd = strtok(cb.cmd, " ");
+  if (cmd == NULL) return;
+
+  exec_command(cmd);
 }
 
 /* ========================== Input handling and command parsing ========================== */
 /* This function parse the global command buffer calling functions based on its content. */
-static void parse_command() {
-  if (strncmp(cb.cmd, "/addrule ", 9) == 0) {
-    char err[ERROR_LEN];
-    rule *r = NULL;
-    char *args = cb.cmd + 9;
-
-    if (rule_parse_line(args, &r, err) == -1) {
-      ERR("error: %s", err);
-      return;
-    }
-
-    add_rule_to_bl(r);
-    printf("[*] Rule successfully added\n");
-    return;
-  }
-
-  if (strcmp(cb.cmd, "/lsrules") == 0) {
-    print_rules();
-    return;
-  }
-
-  if (strcmp(cb.cmd, "/clear") == 0) {
-    clear_screen();
-    return;
-  }
-
-  if (strcmp(cb.cmd, "/exit") == 0) exit(0);
-}
 
 /* This function reads a single char from stdin and returns it. It aso handle basic escape sequences parsing. */
 int read_key() {
@@ -225,7 +262,9 @@ int read_key() {
     }
     return '\x1b';
   }
-  
+
+  if (c == '\b' || c == 127) return DEL_KEY;
+    
   return c;
 }
 
@@ -235,21 +274,20 @@ int read_key() {
 */
 int read_command() {
   int ch = read_key();
-  
+
+  /* handle command submission */ 
   if (ch == '\r' || ch == '\n') {
     cb.cmd[cb.len] = '\0';
     write(STDOUT_FILENO, "\r\n", 2);
     parse_command();
     history_add_cmd();
     cb_clear();
-    redraw_prompt();
+    draw_prompt_buf();
   }
-
-  if (ch == 127 || ch == '\b') {
-    if (cb.len > 0) {
-      cb_del();
-      redraw_prompt();
-    }
+  
+  if (ch == DEL_KEY && cb.len > 0) {
+    cb_del();
+    draw_prompt_buf();
   }
 
   if (isprint((unsigned char)ch) && cb.len < CMD_MAX - 1) {

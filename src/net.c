@@ -130,7 +130,7 @@ int accept_client() {
   if (cfd > ctx->maxclient) ctx->maxclient = cfd;
   if (tfd > ctx->maxclient) ctx->maxclient = tfd;
 
-  printf("Client %d <=> Target %d\n", cfd, tfd);
+  // printf("Client %d <=> Target %d\n", cfd, tfd);
   
   return cfd;
 }
@@ -162,7 +162,7 @@ int build_fd_set(fd_set *readfds) {
 
 /* It closes both the client and target sockets, and removed their value from the context. */
 void close_session(int idx) {
-  printf("Closing session cfd=%d <-> tfd=%d\n", ctx->clients[idx], ctx->targets[idx]);
+  // printf("Closing session cfd=%d <-> tfd=%d\n", ctx->clients[idx], ctx->targets[idx]);
   close(ctx->clients[idx]);
   close(ctx->targets[idx]);
 

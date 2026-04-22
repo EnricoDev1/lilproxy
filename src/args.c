@@ -13,7 +13,7 @@ static int parse_port(const char *port) {
   long val = strtol(port, &end, 10);
 
   if (*end != '\0' || errno == ERANGE || val < 0 || val > 65535) {
-    fprintf(stderr, "Port must be a number between 0-65535");
+    ERR("Port must be a number between 0-65535");
     exit(1);
   }
   return (int)val;

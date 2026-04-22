@@ -23,6 +23,8 @@ int main(int argc, char *argv[]) {
   connection_init();
   proxy_init();
   load_rules();
+  commands_init();
+  
   if (set_raw_mode(STDIN_FILENO, 1) == -1) {
     perror("set_raw_mode");
     exit(1);
