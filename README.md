@@ -7,7 +7,7 @@ You can add rules in `rules.txt` with this format: `<action>:<pattern>[:<respons
   - drop: close the connection
   - reply: send a custom response back to the client
 - pattern: sequence to match, it supports escape sequences.
-- response: (reply required), data to send back to the client when the pattern is matched. Supports escape sequences as well.
+- response: (reply action required), data to send back to the client when the pattern is matched. Supports escape sequences as well.
 
 Examples:
 ```
