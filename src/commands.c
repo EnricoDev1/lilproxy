@@ -1,3 +1,5 @@
+#include <asm-generic/ioctls.h>
+#include <bits/sockaddr.h>
 #include <ctype.h>
 #include <rpc/netdb.h>
 #include <stdio.h>
@@ -5,38 +7,25 @@
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #include "rules.h"
 #include "types.h"
 #include "commands.h"
 
-#define CTRL_KEY(k) ((k) & 0x1f)
-#define ARROW_KEY(k) ((k) >= ARROW_LEFT && (k) <= ARROW_DOWN)
-#define PROMPT_CHAR ">"
-
-enum specialKeys {
-  ARROW_LEFT = 1000,
-  ARROW_RIGHT,
-  ARROW_UP,
-  ARROW_DOWN,
-  DEL_KEY
-};
-
-struct commandEntry {
-  char *name;
-  void (*callback)(void);
-};
-
 struct cmdBuffer cb;
+
 static struct cmdBuffer *history[HISTORY_LEN];
 static size_t h_len = 0;
 static size_t h_pos = 0;
 
-static struct commandEntry commands[10];
+static struct commandEntry commands[MAX_COMMANDS];
 static int commands_len = 0;
 
-/* ========================== "TUI" setup ========================== */
-void disable_raw_mode_at_exit(void);
+int grows, gcols;
+/* ========================== raw mode setup ========================== */
+static void disable_raw_mode_at_exit(void);
 static void cb_clear();
 static void draw_prompt_buf();
 
@@ -79,7 +68,7 @@ int set_raw_mode(int fd, int enable) {
   return 0;
 }
 
-void disable_raw_mode_at_exit(void) {
+static void disable_raw_mode_at_exit(void) {
   set_raw_mode(STDIN_FILENO, 0);
 }
 
@@ -108,7 +97,16 @@ static void draw_prompt_buf() {
   }
 }
 
-/* ========================== HISTORY ========================== */
+/* get the current terminal max x and max y by moving cursor "out" of screen and getting the cursor real position */
+static int get_term_rowcol() {
+  struct winsize ws;
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) return -1;
+  gcols = ws.ws_col;
+  grows = ws.ws_row;
+  return 0;
+}
+
+/* ========================== History ========================== */
 /* This function adds the current buffer content to the history when a command is sent. */
 static void history_add_cmd() {
   if (h_len > 0 && (strcmp(history[h_len-1]->cmd, cb.cmd) == 0)) return;
@@ -168,15 +166,68 @@ static void update_cb_history(struct cmdBuffer *buf) {
   cb.len = buf->len;
 }
 
+/* Print a binary string parsing special chars and raw bytes */
+static void print_bin(const char *input, size_t len) {
+  if (get_term_rowcol() == -1) return;
+  size_t max_len = (gcols > 20) ? (gcols - 20) : 24;
+  size_t shown = 0;
+
+  for (size_t i = 0; i < len; i++) {
+    unsigned char b = input[i];
+    if (shown >= max_len) {
+      printf(" ... [truncated %zu bytes]", len-i);
+      break;
+    }
+
+    switch (b) {
+      case '\n':
+        printf("\\n");
+        shown += 2;
+        break;
+      case '\r':
+        printf("\\r");
+        shown += 2;
+        break;
+      case '\t':
+        printf("\\t");
+        shown += 2;
+        break;
+      case '\\':
+        printf("\\\\");
+        shown += 2;
+        break;
+      default:
+        if (isprint(b)) {
+          fputc(b, stdout);
+          shown += 1;
+        } else {
+          printf("\\x%02x", b);
+          shown += 4;
+        }
+        break;
+    }
+  }
+}
+
 /* ========================== Commands callbacks ========================== */
-/* This function print rules based on their action */
 static void print_rules() {
   for (int i = 0; i < bl->nrules; i++) {
     rule *r = bl->rules[i];
-    if (r->action == ACTION_REPLY) printf("reply:%s:%s\r\n", r->pattern, r->response);
-    else if (r->action == ACTION_BLOCK) printf("block:%s\r\n", r->pattern);
-    else if (r->action == ACTION_DROP) printf("drop:%s\r\n", r->pattern);
-  }
+    if (r->action == ACTION_REPLY) {
+      printf("reply:");
+      print_bin(r->pattern, r->len);
+      printf(":");
+      print_bin(r->response, r->r_len);
+    }
+    else if (r->action == ACTION_BLOCK) {
+      printf("block:");
+      print_bin(r->pattern, r->len);
+    } else if (r->action == ACTION_DROP) {
+      printf("drop:");
+      print_bin(r->pattern, r->len);
+    }
+    printf("\r\n");
+  }   
   fflush(stdout);
 }
 
@@ -190,6 +241,11 @@ static void print_help() {
   fflush(stdout);  
 }
 
+static void save_bl_to_file() {
+  // TODO ...
+}
+
+/* This function add a new rule to the global blacklist */
 static void add_rule() {
   char err[ERROR_LEN];
   rule *r = NULL;
@@ -206,6 +262,7 @@ static void add_rule() {
 }
 
 static void add_command(char *command_name, void (*callback)(void)) {
+  if (commands_len >= MAX_COMMANDS) return;
   commands[commands_len].name = command_name;  
   commands[commands_len].callback = callback;
   commands_len++;
@@ -218,7 +275,7 @@ void commands_init() {
   add_command("help", print_help);
 }
 
-
+/* This function simply calls the callback of a command based on the command name received as argument */
 static void exec_command(const char *command) {
   for(int i = 0; i < commands_len; i++) {
     if (strcmp(command, commands[i].name) == 0) {
@@ -228,10 +285,10 @@ static void exec_command(const char *command) {
   }
 }
 
+/* This function call the exec_command() with the right command name */
 static void parse_command() {
   char *cmd = strtok(cb.cmd, " ");
   if (cmd == NULL) return;
-
   exec_command(cmd);
 }
 
@@ -239,7 +296,7 @@ static void parse_command() {
 /* This function parse the global command buffer calling functions based on its content. */
 
 /* This function reads a single char from stdin and returns it. It aso handle basic escape sequences parsing. */
-int read_key() {
+static int read_key() {
   int nread;
   char c;
 

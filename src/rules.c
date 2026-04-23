@@ -137,6 +137,7 @@ int rule_parse_line(const char *line, rule **out_rule, char *err) {
 
     int rlen = parse_bytestring(response, r->response, MAX_RESPONSE_LEN);
     if (rlen < 0) { rule_free(r); build_error(err, rlen == -1 ? "invalid escape\n" : "response too long\n"); return -1; }
+    r->r_len = rlen;
   }
   *out_rule = r;  
   return 0;

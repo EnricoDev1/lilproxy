@@ -1,3 +1,3 @@
 reply:aaaa:bbbb
 drop:123123
-block:\x41\x41\x41
+block:\x41\x41\x12
