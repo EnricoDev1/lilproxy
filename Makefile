@@ -7,9 +7,6 @@ SRC := src/main.c src/args.c src/net.c src/rules.c src/proxy.c src/commands.c
 
 $(TARGET): $(SRC)
 	$(CC) $(SRC) -o $(TARGET) $(CFLAGS)
-
-run: $(TARGET)
-	./$(TARGET)
 	
 clean:
 	rm -f proxy

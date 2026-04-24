@@ -4,19 +4,19 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include "args.h"
-#include "net.h"
-#include "proxy.h"
-#include "rules.h"
-#include "state.h"
-#include "commands.h"
+#include <proxy/args.h>
+#include <proxy/net.h>
+#include <proxy/proxy.h>
+#include <proxy/rules.h>
+#include <proxy/state.h>
+#include <proxy/commands.h>
 
 int main(int argc, char *argv[]) {
   cfg = cfg_init();
   parse_args(argc, argv);
     
   if (cfg->l_port == 0) {
-    fprintf(stderr, "Usage: %s -l <local-port> -a <target-addr> -t <target-port> [-r <config-file>]", argv[0]);
+    fprintf(stderr, "Usage: %s -l <local-port> -a <target-addr> -t <target-port> [-r <rules-file>]", argv[0]);
     exit(1);
   }
 

@@ -1,6 +1,8 @@
 #ifndef PROXY_NET_H
 #define PROXY_NET_H
 
+#include <sys/select.h>
+
 #include "state.h"
 
 int server_init(int port);

@@ -15,7 +15,7 @@
 #include <sys/select.h>
 #include <netinet/tcp.h>
 
-#include "net.h"
+#include <proxy/net.h>
 
 /* Init the TCP connection and returns the assigned server socket file descriptor. */
 int server_init(int port) {

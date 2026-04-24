@@ -3,9 +3,9 @@
 #include <stdlib.h>
 #include <getopt.h>
 
-#include "args.h"
-#include "types.h"
-#include "state.h"
+#include <proxy/args.h>
+#include <proxy/types.h>
+#include <proxy/state.h>
 
 /* Safe parse port from string to int. */
 static int parse_port(const char *port) {
@@ -25,7 +25,7 @@ void parse_args(int argc, char *argv[]) {
     {"target-port", required_argument, 0, 't'},
     {"target-addr", required_argument, 0, 'a'},
     {"port", required_argument, 0, 'l'},
-    {"rules", optional_argument, 0, 'r'},
+    {"rules-file", optional_argument, 0, 'r'},
     {0, 0, 0, 0}
   };
   

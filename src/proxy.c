@@ -3,10 +3,10 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#include "net.h"
-#include "proxy.h"
-#include "rules.h"
-#include "types.h"
+#include <proxy/net.h>
+#include <proxy/proxy.h>
+#include <proxy/rules.h>
+#include <proxy/types.h>
 
 proxyContext *ctx;
 proxyTarget *target;

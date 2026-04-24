@@ -1,14 +1,16 @@
+#include "proxy/commands.h"
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
 
-#include "rules.h"
-#include "types.h"
+#include <proxy/rules.h>
+#include <proxy/types.h>
+#include <proxy/state.h>
 
 /* Free a rule struct and its fields */
-static void rule_free(rule *r) {
+void rule_free(rule *r) {
   if(!r) return;
   free(r->pattern);
   free(r->response);
@@ -106,7 +108,7 @@ int rule_parse_line(const char *line, rule **out_rule, char *err) {
   char *action, *pattern, *response;
   rule *r;
   
-  if (!line || !*line) { build_error(err, "empty rule\n"); return -1; }
+  if (!line || !*line) { build_error(err, "empty rule"); return -1; }
   snprintf(tmp, sizeof(tmp), "%s", line);
   tmp[strcspn(tmp, "\n")] = '\0';
 
@@ -114,13 +116,13 @@ int rule_parse_line(const char *line, rule **out_rule, char *err) {
   pattern = strtok(NULL, ":");
   response = strtok(NULL, "");
 
-  if (!action) { build_error(err, "missing action\n"); return -1; }
+  if (!action) { build_error(err, "missing action"); return -1; }
 
   rule_action a = parse_action(action);
-  if (a == ACTION_NONE) { build_error(err, "unknown action\n"); return -1; }
-  if (a == ACTION_REPLY && (!response || !*response)) { build_error(err, "reply needs a response\n"); return -1; }
+  if (a == ACTION_NONE) { build_error(err, "unknown action"); return -1; }
+  if (a == ACTION_REPLY && (!response || !*response)) { build_error(err, "reply needs a response"); return -1; }
 
-  if (!pattern || !*pattern) { build_error(err, "missing pattern\n"); return -1; }
+  if (!pattern || !*pattern) { build_error(err, "missing pattern"); return -1; }
   r = calloc(1, sizeof(*r));
   if (r == NULL) return -1;
   r->action = a;
@@ -128,17 +130,18 @@ int rule_parse_line(const char *line, rule **out_rule, char *err) {
   if (r->pattern == NULL) {return -1;}
 
   int plen = parse_bytestring(pattern, r->pattern, MAX_PATTERN_LEN);
-  if (plen < 0) { rule_free(r); build_error(err, plen == -1 ? "invalid escape\n" : "pattern too long\n"); return -1; }
-  r->len = plen;
+  if (plen < 0) { rule_free(r); build_error(err, plen == -1 ? "invalid escape" : "pattern too long"); return -1; }
+  r->p_len = plen;
 
   if (a == ACTION_REPLY) {
     r->response = malloc(MAX_RESPONSE_LEN);
     if (r->response == NULL) { rule_free(r); return -1; }
 
     int rlen = parse_bytestring(response, r->response, MAX_RESPONSE_LEN);
-    if (rlen < 0) { rule_free(r); build_error(err, rlen == -1 ? "invalid escape\n" : "response too long\n"); return -1; }
+    if (rlen < 0) { rule_free(r); build_error(err, rlen == -1 ? "invalid escape" : "response too long"); return -1; }
     r->r_len = rlen;
   }
+  
   *out_rule = r;  
   return 0;
 }
@@ -161,30 +164,45 @@ void add_rule_to_bl(rule *r) {
   bl->rules[bl->nrules++] = r;
 }
 
+int del_rule_by_id(int id) {
+  for (int i = 0; i < bl->nrules; i++) {
+    rule *r = bl->rules[i];
+    if (r->id == id) {
+      for (int j = i; j < bl->nrules-1; j++) {
+        bl->rules[j] = bl->rules[j+1];
+      }
+      bl->nrules--;
+      rule_free(r);
+      return 0;
+    }
+  }
+  return -1;
+}
+
 /*
   This function loads rules from config.txt file, filling up the global blacklist.
   It also checks for allocation error.
 */
 void load_rules() {
   bl = init_blacklist(DEFAULT_INITIAL_CAP);
-
+  
   FILE *fp = fopen(cfg->rules_file, "r");
   if (fp == NULL) {perror("Error while opening rules file"); exit(1);}
-
+  
   /* Read rules from file and fill the blacklist */
   char line[MAX_PATTERN_LEN];
-  int lcount = 1;
   char err[ERROR_LEN];
+  int rcount = 0;
+  
   while (fgets(line, MAX_PATTERN_LEN, fp)) {
     rule *r = NULL;
-
+    
     if (rule_parse_line(line, &r, err) == -1) {
-      ERR("error at %s:%d - %s\n", cfg->rules_file, lcount, err);
+      ERR("error at %s:%d - %s\n", cfg->rules_file, rcount+1, err);
       exit(1);
     }
-
+    r->id = rcount++;
     add_rule_to_bl(r);
-    lcount++;
   }
   fclose(fp);
 }
@@ -195,7 +213,7 @@ rule *check_rules(const unsigned char *buf, int len) {
     if (bl->rules[i] == NULL) {
       exit(1);
     }
-    if (memmem(buf, len, bl->rules[i]->pattern, bl->rules[i]->len)) {
+    if (memmem(buf, len, bl->rules[i]->pattern, bl->rules[i]->p_len)) {
       return bl->rules[i];
     }
   }

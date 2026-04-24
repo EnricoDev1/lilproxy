@@ -1,7 +1,8 @@
 #ifndef PROXY_STATE_H
 #define PROXY_STATE_H
 
-#include "types.h"
+#include "proxy.h"
+#include "rules.h"
 
 extern proxyContext *ctx;
 extern proxyTarget *target;

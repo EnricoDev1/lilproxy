@@ -1,4 +1,3 @@
-#include <asm-generic/ioctls.h>
 #include <bits/sockaddr.h>
 #include <ctype.h>
 #include <rpc/netdb.h>
@@ -6,13 +5,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
-#include <unistd.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <errno.h>
 
-#include "rules.h"
-#include "types.h"
-#include "commands.h"
+#include <proxy/rules.h>
+#include <proxy/types.h>
+#include <proxy/commands.h>
+#include <proxy/state.h>
+#include <proxy/term.h>
 
 struct cmdBuffer cb;
 
@@ -24,7 +25,8 @@ static struct commandEntry commands[MAX_COMMANDS];
 static int commands_len = 0;
 
 int grows, gcols;
-/* ========================== raw mode setup ========================== */
+
+/* ========================== low level terminal handling ========================== */
 static void disable_raw_mode_at_exit(void);
 static void cb_clear();
 static void draw_prompt_buf();
@@ -73,11 +75,11 @@ static void disable_raw_mode_at_exit(void) {
 }
 
 static void clear_screen() {
-  write(STDOUT_FILENO, "\x1b[H\x1b[2J\x1b[3J", 11);
+  write(STDOUT_FILENO, CLEAR, 7);
 }
 
 static void clear_cur_line() {
-  write(STDOUT_FILENO, "\x1b[2K", 4);
+  write(STDOUT_FILENO, ERASE_LINE, 4);
 }
 
 static void cursor_at_line_start() {
@@ -85,8 +87,8 @@ static void cursor_at_line_start() {
 }
 
 static void draw_prompt() {
-  cursor_at_line_start();
   clear_cur_line();
+  cursor_at_line_start();
   write(STDOUT_FILENO, PROMPT_CHAR" ", 2);
 }
 
@@ -97,7 +99,6 @@ static void draw_prompt_buf() {
   }
 }
 
-/* get the current terminal max x and max y by moving cursor "out" of screen and getting the cursor real position */
 static int get_term_rowcol() {
   struct winsize ws;
   if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) return -1;
@@ -106,7 +107,7 @@ static int get_term_rowcol() {
   return 0;
 }
 
-/* ========================== History ========================== */
+/* ========================== history handling ========================== */
 /* This function adds the current buffer content to the history when a command is sent. */
 static void history_add_cmd() {
   if (h_len > 0 && (strcmp(history[h_len-1]->cmd, cb.cmd) == 0)) return;
@@ -156,7 +157,7 @@ static void cb_del() {
 /* Initialize the command buffer and its length to 0. */
 static void cb_clear() {
   cb.len = 0;
-  cb.cmd[0] = '\0';
+  for (size_t i = 0; i < CMD_MAX; i++) cb.cmd[i] = '\0';
 }
 
 /* This function update the global command buffer fields with data from the current history selected entry. */
@@ -166,16 +167,16 @@ static void update_cb_history(struct cmdBuffer *buf) {
   cb.len = buf->len;
 }
 
-/* Print a binary string parsing special chars and raw bytes */
+/* Print a binary string parsing non-printable raw bytes as byte string format. It also truncates the output if it's too long */
 static void print_bin(const char *input, size_t len) {
   if (get_term_rowcol() == -1) return;
-  size_t max_len = (gcols > 20) ? (gcols - 20) : 24;
+  size_t max_len = (gcols > 20) ? (gcols - 40) : gcols;
   size_t shown = 0;
 
   for (size_t i = 0; i < len; i++) {
     unsigned char b = input[i];
     if (shown >= max_len) {
-      printf(" ... [truncated %zu bytes]", len-i);
+      printf(COLOR_WARN "...[truncated %zu bytes]" RESET, len-i);
       break;
     }
 
@@ -211,20 +212,27 @@ static void print_bin(const char *input, size_t len) {
 
 /* ========================== Commands callbacks ========================== */
 static void print_rules() {
+  if (bl->nrules == 0) {
+    printf(COLOR_INFO "No rules loaded." RESET "\r\n");
+    fflush(stdout);
+    return;
+  }
+
   for (int i = 0; i < bl->nrules; i++) {
     rule *r = bl->rules[i];
+    printf(DIM "#%d " RESET, r->id);
     if (r->action == ACTION_REPLY) {
       printf("reply:");
-      print_bin(r->pattern, r->len);
+      print_bin(r->pattern, r->p_len);
       printf(":");
       print_bin(r->response, r->r_len);
     }
     else if (r->action == ACTION_BLOCK) {
       printf("block:");
-      print_bin(r->pattern, r->len);
+      print_bin(r->pattern, r->p_len);
     } else if (r->action == ACTION_DROP) {
       printf("drop:");
-      print_bin(r->pattern, r->len);
+      print_bin(r->pattern, r->p_len);
     }
     printf("\r\n");
   }   
@@ -232,17 +240,12 @@ static void print_rules() {
 }
 
 static void print_help() {
-  printf("\e[1mAvaible commands:\e[m\r\n");
-  printf("- lsrules: list current blacklist\r\n");
-  printf("- addrule <action>:<pattern>:[<response>]: add a new rule to the blacklist\r\n");
-  printf("- clear: clear screen\r\n");
-  printf("- exit: exit program\r\n");
-  
-  fflush(stdout);  
-}
-
-static void save_bl_to_file() {
-  // TODO ...
+  printf(COLOR_HEADER "Available commands" RESET "\r\n");
+  printf(COLOR_INFO "  addrule <action>:<pattern>:[<response>]" RESET " - add a new rule\r\n");
+  printf(COLOR_INFO "  del <rule_id>" RESET " - delete a rule\r\n");
+  printf(COLOR_INFO "  lsrules" RESET " - list current blacklist\r\n");
+  printf(COLOR_INFO "  clear" RESET " - clear screen\r\n");
+  printf(COLOR_INFO "  help" RESET " - show this help\r\n");
 }
 
 /* This function add a new rule to the global blacklist */
@@ -257,8 +260,37 @@ static void add_rule() {
   }
 
   add_rule_to_bl(r);
-  printf("[+] Rule successfully added\r\n");
+  printf(COLOR_SUCCESS "[+] Rule successfully added" RESET "\r\n");
   return;
+}
+
+/* Delete a rule from blacklist based on provided ID */
+static void del_rule() {
+  if (cb.len < 5) {
+    ERR("error: missing id");
+    return;
+  }
+  
+  char *arg = cb.cmd + 4;
+  char *end;
+  int id = strtol(arg, &end, 10);
+
+  if (end == arg || *end != '\0') {
+    ERR("error: invalid id");
+    return;
+  }
+
+  if (errno == ERANGE) {
+    ERR("error: id out of max range");
+    return;
+  }
+  
+  if(del_rule_by_id(id) == -1) {
+    WARN("no rule found for id=%d", id);
+    return; 
+  }  
+
+  printf(COLOR_SUCCESS "[+] Rule successfully deleted" RESET "\r\n");
 }
 
 static void add_command(char *command_name, void (*callback)(void)) {
@@ -266,13 +298,6 @@ static void add_command(char *command_name, void (*callback)(void)) {
   commands[commands_len].name = command_name;  
   commands[commands_len].callback = callback;
   commands_len++;
-}
-
-void commands_init() {
-  add_command("addrule", add_rule);
-  add_command("lsrules", print_rules);
-  add_command("clear", clear_screen);
-  add_command("help", print_help);
 }
 
 /* This function simply calls the callback of a command based on the command name received as argument */
@@ -283,6 +308,7 @@ static void exec_command(const char *command) {
       return;
     }
   }
+  ERR("unknown command: %s", command);
 }
 
 /* This function call the exec_command() with the right command name */
@@ -290,6 +316,14 @@ static void parse_command() {
   char *cmd = strtok(cb.cmd, " ");
   if (cmd == NULL) return;
   exec_command(cmd);
+}
+
+void commands_init() {
+  add_command("addrule", add_rule);
+  add_command("del", del_rule);
+  add_command("lsrules", print_rules);
+  add_command("clear", clear_screen);
+  add_command("help", print_help);
 }
 
 /* ========================== Input handling and command parsing ========================== */
@@ -327,7 +361,6 @@ static int read_key() {
 
 /*
   This function reads from stdin, handling one command line in terminal raw mode.
-  TODO: implement line whitespace strip
 */
 int read_command() {
   int ch = read_key();
@@ -347,16 +380,19 @@ int read_command() {
     draw_prompt_buf();
   }
 
+  /* append input char to global command buffer and write it on screen. */
   if (isprint((unsigned char)ch) && cb.len < CMD_MAX - 1) {
     cb_append(ch);
     write(STDOUT_FILENO, &ch, 1);
   }
 
+  /* ctrl keys handling */
   if (ch == CTRL_KEY('l')) {
     clear_screen();
     draw_prompt();
   }
 
+  /* history keys handling */
   if (ARROW_KEY(ch)) {
     struct cmdBuffer *buf = NULL;
     switch (ch) {
@@ -365,6 +401,7 @@ int read_command() {
         break;
       case ARROW_DOWN:
         buf = history_get_next();
+        if (buf == NULL) draw_prompt();
         break;
     }
     if (buf != NULL) {
