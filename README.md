@@ -15,3 +15,9 @@ drop:banned
 block:\x00\x01\x41
 reply:Hello:World
 ```
+#### Commands
+- `addrule <action>:<pattern>:[<response>]` - add a new rule
+- `del <rule_id>` - delete a rule
+- `lsrules` - list current blacklist
+- `clear` - clear screen
+- `help` - show help
