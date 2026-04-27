@@ -109,19 +109,21 @@ static int get_term_rowcol() {
 
 /* ========================== history handling ========================== */
 /* This function adds the current buffer content to the history when a command is sent. */
-static void history_add_cmd() {
-  if (h_len > 0 && (strcmp(history[h_len-1]->cmd, cb.cmd) == 0)) return;
+static int history_add_cmd() {
+  if (h_len > 0 && (strcmp(history[h_len-1]->cmd, cb.cmd) == 0)) return -1;
   
   if (history[h_len] != NULL) free(history[h_len]);
   history[h_len] = malloc(sizeof(struct cmdBuffer));
-  if (history[h_len] == NULL) {perror("malloc history[h_len]"); exit(1);}
-   
+  if (history[h_len] == NULL) {perror("malloc history[h_len]"); return -1;}
+    
   strncpy(history[h_len]->cmd, cb.cmd, cb.len);
   history[h_len]->cmd[cb.len] = '\0';
   history[h_len]->len = cb.len;
   
   h_len = (h_len+1)%HISTORY_LEN;
   h_pos = h_len;
+
+  return 0;
 } 
 
 /* This function returns the next cmdBuffer in the global history list. */
@@ -225,7 +227,9 @@ static void print_rules() {
       printf("reply:");
       print_bin(r->pattern, r->p_len);
       printf(":");
-      print_bin(r->response, r->r_len);
+      if (r->reply_src == REPLY_SRC_FILE) {
+        printf("@file=%s", r->r_file_path);
+      } else print_bin(r->response, r->r_len);
     }
     else if (r->action == ACTION_BLOCK) {
       printf("block:");
@@ -259,7 +263,7 @@ static void add_rule() {
     return;
   }
 
-  add_rule_to_bl(r);
+  if (add_rule_to_bl(r) == -1) return;
   printf(COLOR_SUCCESS "[+] Rule successfully added" RESET "\r\n");
   return;
 }
@@ -335,7 +339,7 @@ static int read_key() {
   char c;
 
   while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-    if (nread == -1) {ERR("read"); exit(1);}
+    if (nread == -1) {ERR("read"); return -1;}
   }
   
   /* Parse escape sequence. */
@@ -365,12 +369,15 @@ static int read_key() {
 int read_command() {
   int ch = read_key();
 
+  if (ch == -1) return -1;
+
   /* handle command submission */ 
   if (ch == '\r' || ch == '\n') {
     cb.cmd[cb.len] = '\0';
     write(STDOUT_FILENO, "\r\n", 2);
+
+    if (history_add_cmd() == -1) return -1;
     parse_command();
-    history_add_cmd();
     cb_clear();
     draw_prompt_buf();
   }

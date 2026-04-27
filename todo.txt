@@ -1,0 +1,4 @@
+- change rules file format (maybe toml)
+- implement redis to a future web interface support
+- add support for regex in pattern field
+-  

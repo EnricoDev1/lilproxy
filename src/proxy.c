@@ -18,7 +18,7 @@ static proxyContext *ctx_malloc() {
   proxyContext *ctx = malloc(sizeof(*ctx));
   if (ctx == NULL) {
     perror("malloc ctx");
-    exit(1);
+    return NULL;
   }
   return ctx;
 }
@@ -28,20 +28,21 @@ appConfig *cfg_init() {
 
   if (cfg == NULL) {
     perror("malloc cfg");
-    exit(1);
+    return NULL;
   }
 
   cfg->rules_file = malloc(MAX_FILENAME_LEN * sizeof(char));
   if (cfg->rules_file == NULL) {
     perror("malloc cfg->rules_file");
-    exit(1);
+    return NULL;
   }
   return cfg;
 }
 
 /* Initialize the proxy context to default values. */
-void connection_init() {
+int connection_init() {
   ctx = ctx_malloc();
+  if (ctx == NULL) return -1;
   memset(ctx, 0, sizeof(*ctx));
   
   /* we don't have any client connected yet */
@@ -51,8 +52,9 @@ void connection_init() {
   
   if (ctx->serversock == -1) {
     perror("Creating listening socket");
-    exit(1);
+    return -1;
   }
+  return 0;
 }
 
 /* Initialize proxy state with values received from command line. */
@@ -74,9 +76,7 @@ int relay(int src, int dst, int sender) {
   int n = read(src, buf, sizeof(buf)-1);
   
   if (n <= 0) return -1;
-    
-  buf[n] = '\0';
-  
+      
   rule *r = check_rules(buf, n);
 
   /* block patterns only if they come from client */
@@ -86,9 +86,15 @@ int relay(int src, int dst, int sender) {
         return 0;
       case ACTION_DROP:
         return -1;
-      case ACTION_REPLY:
+      case ACTION_REPLY: {
+        char err[ERROR_LEN];
+        if(rule_reply_refresh(r, err) == -1) {
+          ERR("reply file error (id=%d): %s", r->id, err);
+          return 0; 
+        } 
         write(src, r->response, r->r_len);
         return 0;
+      }
       case ACTION_NONE:
         return 0;
     }
@@ -103,3 +109,4 @@ int relay(int src, int dst, int sender) {
   
   return 0;
 }
+

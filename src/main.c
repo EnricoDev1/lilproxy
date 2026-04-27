@@ -1,3 +1,4 @@
+#include "proxy/types.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/select.h>
@@ -11,24 +12,60 @@
 #include <proxy/state.h>
 #include <proxy/commands.h>
 
-int main(int argc, char *argv[]) {
+int app_setup(int argc, char *argv[]) {
   cfg = cfg_init();
-  parse_args(argc, argv);
+  if (cfg == NULL) return -1;
+  
+  if (parse_args(argc, argv) == -1) return -1;
     
   if (cfg->l_port == 0) {
-    fprintf(stderr, "Usage: %s -l <local-port> -a <target-addr> -t <target-port> [-r <rules-file>]", argv[0]);
-    exit(1);
+    ERR("Usage: %s -l <local-port> -a <target-addr> -t <target-port> [-r <rules-file>]", argv[0]);
+    return -1;
   }
 
-  connection_init();
+  if (connection_init() == -1) return -1;
   proxy_init();
   load_rules();
   commands_init();
-  
+
   if (set_raw_mode(STDIN_FILENO, 1) == -1) {
     perror("set_raw_mode");
-    exit(1);
+    return -1;
   }
+
+  return 0;
+}
+
+void handle_sessions(fd_set *readfds) {
+  for (int i = 0; i < ctx->numclients; i++) {
+    int client_fd = ctx->clients[i];
+    int target_fd = ctx->targets[i];
+
+    if (client_fd > 0 && FD_ISSET(client_fd, readfds)) {
+      if (relay(client_fd, target_fd, CLIENT_SENDER) == -1) {
+        close_session(i--);
+        continue;
+      }
+    }
+
+    if (i >= 0 && target_fd > 0 && FD_ISSET(target_fd, readfds)) {
+      if (relay(target_fd, client_fd, TARGET_SENDER) == -1) {
+        close_session(i--);
+        continue;
+      }
+    }
+  }
+}
+
+void handle_events(fd_set *readfds) {
+  if (FD_ISSET(ctx->serversock, readfds)) accept_client();
+  if (FD_ISSET(STDIN_FILENO, readfds)) read_command();
+  handle_sessions(readfds);
+}
+
+int main(int argc, char *argv[]) {
+  if (app_setup(argc, argv) == -1) return -1;
+  
   struct timeval tv;
   fd_set readfds;
   
@@ -41,38 +78,15 @@ int main(int argc, char *argv[]) {
     
     if (retval == -1) {
       perror("select() error");
-      exit(1);
+      return 1;
     }
 
-    /* One or more file descriptors are ready. */
-    if (retval) {
-      /* A new client wants to connect. */
-      if (FD_ISSET(ctx->serversock, &readfds)) {
-        accept_client();
-      }
-
-      /* We received something from stdin */
-      if (FD_ISSET(STDIN_FILENO, &readfds)) {
-        read_command();
-      }
-
-      /* For each active session, relay data in both directions. */
-      for (int i = 0; i < ctx->numclients; i++) {
-        if (ctx->clients[i] && FD_ISSET(ctx->clients[i], &readfds)) {
-          if (relay(ctx->clients[i], ctx->targets[i], CLIENT_SENDER) == -1) {
-            close_session(i--);
-            continue;
-          }
-        }
-        if (i >= 0 && ctx->targets[i] > 0 && FD_ISSET(ctx->targets[i], &readfds)) {
-          if (relay(ctx->targets[i], ctx->clients[i], TARGET_SENDER) == -1) {
-            close_session(i--);
-          }
-        }
-      }      
-    } else {
-      /* Timeout reached... */
+    if (retval > 0) {
+      handle_events(&readfds);
     }
-  }  
+  }
+
+  /* disable raw mode at exit */
+  set_raw_mode(STDIN_FILENO, 0);
   return 0;
 }

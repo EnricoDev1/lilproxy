@@ -24,7 +24,7 @@ typedef struct _PROXY_TARGET {
 } proxyTarget;
 
 appConfig *cfg_init();
-void connection_init();
+int connection_init();
 void proxy_init();
 int relay(int src, int dst, int sender);
 

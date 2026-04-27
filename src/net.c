@@ -103,7 +103,7 @@ static int TCPConnect(const char *addr, int port, int nonblock) {
   It returns -1 on error, otherwise the new client socket file descriptor.
 */
 int accept_client() {
-  if (ctx->numclients > MAX_CLIENTS) return -1;
+  if (ctx->numclients >= MAX_CLIENTS) return -1;
   
   int cfd;
   struct sockaddr_in sa;
@@ -112,7 +112,7 @@ int accept_client() {
   cfd = accept(ctx->serversock, (struct sockaddr*)&sa, &slen);
   if (cfd == -1) {
     perror("accept error");
-    exit(1);
+    return -1;
   }    
 
   int tfd = TCPConnect(target->addr, target->port, 0);

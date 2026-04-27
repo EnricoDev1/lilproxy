@@ -1,19 +1,29 @@
-#include "proxy/commands.h"
+#include "proxy/term.h"
+#include <stdarg.h>
+#define _POSIX_C_SOURCE 200809L
+
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <sys/stat.h>
 
 #include <proxy/rules.h>
 #include <proxy/types.h>
 #include <proxy/state.h>
 
+static int next_rule_id = 0;
+
 /* Free a rule struct and its fields */
 void rule_free(rule *r) {
   if(!r) return;
   free(r->pattern);
-  free(r->response);
+  if (r->action == ACTION_REPLY) {
+    free(r->response);
+      if (r->reply_src == REPLY_SRC_FILE)
+      free(r->r_file_path);
+  }
   free(r);
 }
 
@@ -25,7 +35,7 @@ static void *init_blacklist(int initial_cap) {
   blacklist *bl = malloc(sizeof(*bl));
   if (bl == NULL) {
     perror("malloc bl");
-    exit(1);
+    return NULL;
   }
 
   if (initial_cap <= 0) initial_cap = DEFAULT_INITIAL_CAP;
@@ -35,7 +45,7 @@ static void *init_blacklist(int initial_cap) {
   bl->rules = malloc((size_t)bl->capacity * sizeof(*bl->rules));
   if (bl->rules == NULL) {
     perror("malloc bl->rules");
-    exit(1);
+    return NULL;
   }
 
   return bl;
@@ -92,9 +102,72 @@ static rule_action parse_action(const char *action) {
   This local function safe-copy the error string from msg into err.
   This is used to handle errors in different ways based on the caller of rule_parse_line.
 */
-static void build_error(char *err, char *msg) {
+static void build_error(char *err, const char *fmt, ...) {
   if (err == NULL) return;
-  snprintf(err, ERROR_LEN, "%s", msg);
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(err, ERROR_LEN, fmt, args);
+  va_end(args);
+}
+
+/* checks if the rule provided file changed since last load, in case, it upload the response buffer with new contents */
+int rule_reply_refresh(rule *r, char *err) {
+  struct stat st;
+
+  /* check if the action data is correct and if the file is ok */
+  if (r->action != ACTION_REPLY || r->reply_src != REPLY_SRC_FILE) return 0;
+
+  if (stat(r->r_file_path, &st) == -1) {
+    build_error(err, "cannot stat %s", r->r_file_path);
+    return -1;
+  }
+
+  /* file didn't changed */
+  if (r->response && r->r_file_mtime == st.st_mtime) return 0; 
+
+  FILE *fp = fopen(r->r_file_path, "rb");
+  if (fp == NULL) {
+    build_error(err, "cannot open %s", r->r_file_path);
+    return -1;
+  }
+
+  // calculate file size
+  if (fseek(fp, 0, SEEK_END) != 0) {
+    build_error(err, "failed fseek on %s", r->r_file_path);
+    fclose(fp);
+    return -1;
+  }
+
+  long sz = ftell(fp);
+  if (sz < 0 || sz > MAX_PATTERN_LEN) {
+    build_error(err, "invalid file size %s", r->r_file_path);
+    fclose(fp);
+    return -1;
+  }
+  rewind(fp);
+
+  // read file contents 
+  char *buf = malloc((size_t)sz + 1);
+  if (buf == NULL) {
+    build_error(err, "failed file buf malloc");
+    fclose(fp);
+    return -1;
+  }
+  
+  if (fread(buf, 1, (size_t)sz, fp) != (size_t)sz) {
+    build_error(err, "failed to read from file %s", r->r_file_path);
+    free(buf);
+    fclose(fp);
+    return -1;
+  }
+  fclose(fp);
+
+  // in case everything went good, we update the rule data with the changed file ones
+  free(r->response);
+  r->response = buf;
+  r->r_len = (int)sz;
+  r->r_file_mtime = st.st_mtime;
+  return 0; 
 }
 
 /*
@@ -111,7 +184,7 @@ int rule_parse_line(const char *line, rule **out_rule, char *err) {
   if (!line || !*line) { build_error(err, "empty rule"); return -1; }
   snprintf(tmp, sizeof(tmp), "%s", line);
   tmp[strcspn(tmp, "\n")] = '\0';
-
+  
   action = strtok(tmp, ":");
   pattern = strtok(NULL, ":");
   response = strtok(NULL, "");
@@ -132,14 +205,32 @@ int rule_parse_line(const char *line, rule **out_rule, char *err) {
   int plen = parse_bytestring(pattern, r->pattern, MAX_PATTERN_LEN);
   if (plen < 0) { rule_free(r); build_error(err, plen == -1 ? "invalid escape" : "pattern too long"); return -1; }
   r->p_len = plen;
-
+  
+  /* parse the REPLY action type */
   if (a == ACTION_REPLY) {
-    r->response = malloc(MAX_RESPONSE_LEN);
-    if (r->response == NULL) { rule_free(r); return -1; }
+    
+    // parse the FILE based response type
+    if (strlen(response) > 6 && strncmp(response, "@file=", 6) == 0) {
+      r->reply_src = REPLY_SRC_FILE;
+      r->r_file_path = strdup(response+6);
 
-    int rlen = parse_bytestring(response, r->response, MAX_RESPONSE_LEN);
-    if (rlen < 0) { rule_free(r); build_error(err, rlen == -1 ? "invalid escape" : "response too long"); return -1; }
-    r->r_len = rlen;
+      if (!r->r_file_path || !*r->r_file_path) {
+       rule_free(r); build_error(err, "invalid @file path"); return -1;
+      }
+
+      r->response = NULL;
+      r->r_len = 0;
+      r->r_file_mtime = 0; // force the first load into memory
+    } else {
+      // parse the INLINE reponse type
+      r->reply_src = REPLY_SRC_INLINE;   
+      r->response = malloc(MAX_RESPONSE_LEN);
+      if (r->response == NULL) { rule_free(r); return -1; }
+
+      int rlen = parse_bytestring(response, r->response, MAX_RESPONSE_LEN);
+      if (rlen < 0) { rule_free(r); build_error(err, rlen == -1 ? "invalid escape" : "response too long"); return -1; }
+      r->r_len = rlen;
+    }
   }
   
   *out_rule = r;  
@@ -150,20 +241,25 @@ int rule_parse_line(const char *line, rule **out_rule, char *err) {
   This function reallocate space for rules inside the blacklist struct,
   doubling its capacity.
 */
-static void reallocate_rules() {
+static int reallocate_rules() {
   bl->capacity *= 2;
   rule **tmp = realloc(bl->rules, bl->capacity*sizeof(rule *));
-  if (tmp == NULL) { perror("realloc bl->rules"); exit(1); }
+  if (tmp == NULL) { perror("realloc bl->rules"); return -1; }
   bl->rules = tmp;
+  return 0;
 }
 
 /* This function append a given rule to the blacklist, allocating more space if needed. */
-void add_rule_to_bl(rule *r) {
+int add_rule_to_bl(rule *r) {
   if (bl->nrules == bl->capacity)
-    reallocate_rules();
+    if (reallocate_rules() == -1) {ERR(COLOR_ERROR "Failed to add rule" RESET); return -1;}
+  r->id = next_rule_id++;
   bl->rules[bl->nrules++] = r;
+
+  return 0;
 }
 
+/* delete a rule from the blacklist based on its id */
 int del_rule_by_id(int id) {
   for (int i = 0; i < bl->nrules; i++) {
     rule *r = bl->rules[i];
@@ -181,37 +277,37 @@ int del_rule_by_id(int id) {
 
 /*
   This function loads rules from config.txt file, filling up the global blacklist.
-  It also checks for allocation error.
 */
-void load_rules() {
+int load_rules() {
   bl = init_blacklist(DEFAULT_INITIAL_CAP);
+  if (bl == NULL) return -1;
   
   FILE *fp = fopen(cfg->rules_file, "r");
-  if (fp == NULL) {perror("Error while opening rules file"); exit(1);}
+  if (fp == NULL) {perror("Error while opening rules file"); return -1;}
   
   /* Read rules from file and fill the blacklist */
   char line[MAX_PATTERN_LEN];
   char err[ERROR_LEN];
-  int rcount = 0;
+  int lcount = 0;
   
   while (fgets(line, MAX_PATTERN_LEN, fp)) {
     rule *r = NULL;
     
     if (rule_parse_line(line, &r, err) == -1) {
-      ERR("error at %s:%d - %s\n", cfg->rules_file, rcount+1, err);
-      exit(1);
+      ERR("error at %s:%d - %s\n", cfg->rules_file, lcount+1, err);
+      return -1;
     }
-    r->id = rcount++;
-    add_rule_to_bl(r);
+    if (add_rule_to_bl(r) == -1) return -1;
   }
   fclose(fp);
+  return 0;
 }
 
 /* Given a stream of data, return 0 if they do not violates the blacklist rules */
 rule *check_rules(const unsigned char *buf, int len) {
   for (int i = 0; i < bl->nrules; i++) {
     if (bl->rules[i] == NULL) {
-      exit(1);
+      return NULL;
     }
     if (memmem(buf, len, bl->rules[i]->pattern, bl->rules[i]->p_len)) {
       return bl->rules[i];
