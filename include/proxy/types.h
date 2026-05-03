@@ -1,6 +1,9 @@
 #ifndef PROXY_TYPES_H
 #define PROXY_TYPES_H
 
+#include <stdio.h>
+#include <stdarg.h>
+
 #define MAX_CLIENTS 1000
 #define ADDR_LEN 64
 #define MAX_PATTERN_LEN 256
@@ -13,12 +16,32 @@
 #define MAX_FILENAME_LEN 128
 
 #include <proxy/term.h>
-#define ERR(...) fprintf(stderr, COLOR_ERROR "error: " RESET); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\r\n")
-#define WARN(...) fprintf(stderr, COLOR_WARN "warn: " RESET); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\r\n")
 
 typedef enum _ENDPOINT_ROLE {
   EP_CLIENT,
   EP_TARGET
 } endpoint_role;
+
+static inline void ERR(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    fprintf(stderr, COLOR_ERROR "error: " RESET);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\r\n");
+
+    va_end(args);
+}
+
+static inline void WARN(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    fprintf(stderr, COLOR_WARN "warn: " RESET);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\r\n");
+
+    va_end(args);
+}
 
 #endif

@@ -1,5 +1,3 @@
-#include "proxy/types.h"
-#include <stdio.h>
 #include <sys/epoll.h>
 #include <unistd.h>
 

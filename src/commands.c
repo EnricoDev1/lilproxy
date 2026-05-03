@@ -1,6 +1,4 @@
-#include <bits/sockaddr.h>
 #include <ctype.h>
-#include <rpc/netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
