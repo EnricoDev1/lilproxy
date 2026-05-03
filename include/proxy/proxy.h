@@ -13,9 +13,9 @@ typedef struct _APP_CONFIG {
 typedef struct _PROXY_CONTENT {
   int serversock;
   int numclients;
-  int maxclient;
   int targets[MAX_CLIENTS];
   int clients[MAX_CLIENTS];
+  int t_status[MAX_CLIENTS];
 } proxyContext;
 
 typedef struct _PROXY_TARGET {

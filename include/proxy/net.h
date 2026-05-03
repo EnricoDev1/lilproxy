@@ -3,11 +3,15 @@
 
 #include <sys/select.h>
 
-#include "state.h"
+typedef enum _TARGET_STATUS {
+  CONNECTED = 0,
+  CONNECTING  
+} target_status;
 
 int server_init(int port);
 int accept_client();
 int build_fd_set(fd_set *readfds);
 void close_session(int idx);
+int target_conn_finish(int fd);
 
 #endif

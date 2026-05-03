@@ -283,7 +283,7 @@ int load_rules() {
   if (bl == NULL) return -1;
   
   FILE *fp = fopen(cfg->rules_file, "r");
-  if (fp == NULL) {perror("Error while opening rules file"); return -1;}
+  if (fp == NULL) {ERR("Error while opening rules file"); return -1;}
   
   /* Read rules from file and fill the blacklist */
   char line[MAX_PATTERN_LEN];
@@ -294,7 +294,7 @@ int load_rules() {
     rule *r = NULL;
     
     if (rule_parse_line(line, &r, err) == -1) {
-      ERR("error at %s:%d - %s\n", cfg->rules_file, lcount+1, err);
+      ERR("error at %s:%d - %s", cfg->rules_file, lcount+1, err);
       return -1;
     }
     if (add_rule_to_bl(r) == -1) return -1;

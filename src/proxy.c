@@ -47,7 +47,6 @@ int connection_init() {
   
   /* we don't have any client connected yet */
   ctx->numclients = 0;
-  ctx->maxclient = -1; 
   ctx->serversock = server_init(cfg->l_port); 
   
   if (ctx->serversock == -1) {
@@ -68,8 +67,6 @@ void proxy_init() {
 /*
   Send data received from src to dst. It handles partial writes by looping untile all bytes have been sent. 
   Returns -1 on disconnections/errors, 0 otherwise.
-
-  NOTE: int sender it isn't used at the moment, but it could be useful in future.
 */
 int relay(int src, int dst, int sender) {
   unsigned char buf[MAX_READ_SIZE];
@@ -80,7 +77,7 @@ int relay(int src, int dst, int sender) {
   rule *r = check_rules(buf, n);
 
   /* block patterns only if they come from client */
-  if (r != NULL && sender == CLIENT_SENDER) {
+  if (r != NULL && sender == EP_CLIENT) {
     switch (r->action) {
       case ACTION_BLOCK:
         return 0;

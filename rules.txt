@@ -1,3 +1,4 @@
-reply:aaaa:bbbb
+reply:aaaa:bbbb\n
 drop:123123
 block:\x41\x41\x12
+reply:cccc:@file=/home/enricodev/Documents/dev/test/cacca.html
