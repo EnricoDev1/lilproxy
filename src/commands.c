@@ -66,9 +66,9 @@ static int get_term_rowcol(void) {
 }
 
 static const char *extract_rule_expr(const char *buf, int *has_addrule_prefix) {
-  if (strncmp(buf, "addrule ", 8) == 0) {
+  if (strncmp(buf, "add ", 4) == 0) {
     *has_addrule_prefix = 1;
-    return buf + 8;
+    return buf + 4;
   }
   *has_addrule_prefix = 0;
   return buf;
@@ -95,15 +95,15 @@ static void completion_cb(const char *buf, linenoiseCompletions *lc) {
     return;
   }
 
-  if (strncmp(buf, "addrule ", 8) == 0) {
+  if (strncmp(buf, "add ", 4) == 0) {
     static const char *addrule_samples[] = {
-      "addrule <action>:<pattern>[:<response>]",
-      "addrule reply:<pattern>:<response>",
-      "addrule block:<pattern>",
-      "addrule drop:<pattern>",
-      "addrule block:",
-      "addrule drop:",
-      "addrule reply:"
+      "add <action>:<pattern>[:<response>]",
+      "add reply:<pattern>:<response>",
+      "add block:<pattern>",
+      "add drop:<pattern>",
+      "add block:",
+      "add drop:",
+      "add reply:"
     };
     prefix_len = strlen(buf);
     for (size_t i = 0; i < sizeof(addrule_samples) / sizeof(addrule_samples[0]); i++) {
@@ -135,7 +135,7 @@ static void completion_cb(const char *buf, linenoiseCompletions *lc) {
     if (strchr(pattern, ':') == NULL) {
       char candidate[CMD_MAX + 32];
       if (has_addrule_prefix) {
-        snprintf(candidate, sizeof(candidate), "addrule reply:%s:<response>", pattern);
+        snprintf(candidate, sizeof(candidate), "add reply:%s:<response>", pattern);
       } else {
         snprintf(candidate, sizeof(candidate), "reply:%s:<response>", pattern);
       }
@@ -181,15 +181,15 @@ static char *hints_cb(const char *buf, int *color, int *bold) {
     return NULL;
   }
 
-  if (strncmp(buf, "addrule ", 8) == 0) {
+  if (strncmp(buf, "add ", 4) == 0) {
     static const char *addrule_samples[] = {
-      "addrule <action>:<pattern>[:<response>]",
-      "addrule reply:<pattern>:<response>",
-      "addrule block:<pattern>",
-      "addrule drop:<pattern>",
-      "addrule block:",
-      "addrule drop:",
-      "addrule reply:"
+      "add <action>:<pattern>[:<response>]",
+      "add reply:<pattern>:<response>",
+      "add block:<pattern>",
+      "add drop:<pattern>",
+      "add block:",
+      "add drop:",
+      "add reply:"
     };
     size_t prefix_len = strlen(buf);
     for (size_t i = 0; i < sizeof(addrule_samples) / sizeof(addrule_samples[0]); i++) {
@@ -241,6 +241,7 @@ static void free_hints_cb(void *ptr) {
   free(ptr);
 }
 
+/* print binary data as escaped sequence of chars */
 static void print_bin(const char *input, size_t len) {
   if (get_term_rowcol() == -1) return;
   size_t max_len = (gcols > 20) ? (gcols - 40) : gcols;
@@ -306,7 +307,7 @@ static void print_rules(void) {
 
 static void print_help(void) {
   printf("Available commands\n");
-  printf("  addrule <action>:<pattern>:[<response>] - add a new rule\n");
+  printf("  add <action>:<pattern>:[<response>] - add a new rule\n");
   printf("  del <rule_id> - delete a rule\n");
   printf("  lsrules - list current blacklist\n");
   printf("  clear - clear screen\n");
@@ -379,7 +380,7 @@ static void exec_command_line(char *line) {
     while (*args == ' ') args++;
   }
 
-  if (strcmp(cmd, "addrule") == 0) {
+  if (strcmp(cmd, "add") == 0) {
     add_rule_cmd(args);
     return;
   }
@@ -417,7 +418,7 @@ void commands_init(void) {
   add_command("exit", cmd_exit_wrapper);
 
   /* Keep placeholders for commands parsed with arguments. */
-  add_command("addrule", cmd_add_wrapper);
+  add_command("add", cmd_add_wrapper);
   add_command("del", cmd_del_wrapper);
 
   linenoiseSetCompletionCallback(completion_cb);
@@ -459,10 +460,4 @@ int read_command(void) {
   linenoiseFree(line);
 
   return start_linenoise_editor();
-}
-
-int set_raw_mode(int fd, int enable) {
-  (void)fd;
-  (void)enable;
-  return 0;
 }

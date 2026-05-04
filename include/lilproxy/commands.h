@@ -28,6 +28,5 @@ struct commandEntry {
 
 void commands_init();
 int read_command();
-int set_raw_mode(int fd, int enable);
 
 #endif

@@ -2,7 +2,7 @@ CC := gcc
 
 all: lilproxy
 CFLAGS := -ggdb -O2 -Wall -W -std=c99 -Iinclude -Ilibs -D_GNU_SOURCE
-TARGET := proxy
+TARGET := lilproxy
 SRC := src/main.c src/args.c src/net.c src/rules.c src/proxy.c src/commands.c src/epoll.c \
 	   libs/linenoise.c
 
