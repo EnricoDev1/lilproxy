@@ -7,9 +7,9 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#include <proxy/rules.h>
-#include <proxy/types.h>
-#include <proxy/state.h>
+#include <lilproxy/rules.h>
+#include <lilproxy/types.h>
+#include <lilproxy/state.h>
 
 static int next_rule_id = 0;
 

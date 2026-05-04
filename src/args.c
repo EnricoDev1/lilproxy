@@ -3,9 +3,9 @@
 #include <stdlib.h>
 #include <getopt.h>
 
-#include <proxy/args.h>
-#include <proxy/types.h>
-#include <proxy/state.h>
+#include <lilproxy/args.h>
+#include <lilproxy/types.h>
+#include <lilproxy/state.h>
 
 /* Safe parse port from string to int. */
 static int parse_port(const char *port) {

@@ -15,7 +15,7 @@
 #define CONFIG_FILENAME "rules.txt"
 #define MAX_FILENAME_LEN 128
 
-#include <proxy/term.h>
+#include <lilproxy/term.h>
 
 typedef enum _ENDPOINT_ROLE {
   EP_CLIENT,

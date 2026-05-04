@@ -1,6 +1,6 @@
 #include <sys/epoll.h>
 
-#include <proxy/types.h>
+#include <lilproxy/types.h>
 
 #define MAX_EVENTS 128
 #define EP_BASE_EVENTS (EPOLLRDHUP | EPOLLHUP | EPOLLERR)

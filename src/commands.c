@@ -1,103 +1,63 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <termios.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <errno.h>
 
-#include <proxy/rules.h>
-#include <proxy/types.h>
-#include <proxy/commands.h>
-#include <proxy/state.h>
-#include <proxy/term.h>
+#include <linenoise.h>
 
-struct cmdBuffer cb;
-
-static struct cmdBuffer *history[HISTORY_LEN];
-static size_t h_len = 0;
-static size_t h_pos = 0;
+#include <lilproxy/commands.h>
+#include <lilproxy/rules.h>
+#include <lilproxy/state.h>
+#include <lilproxy/types.h>
 
 static struct commandEntry commands[MAX_COMMANDS];
 static int commands_len = 0;
 
-int grows, gcols;
+static struct linenoiseState ln_state;
+static char ln_buf[CMD_MAX];
+static int ln_started = 0;
+static int ln_initialized = 0;
+static char history_path[512];
+static int history_path_ready = 0;
 
-/* ========================== low level terminal handling ========================== */
-static void disable_raw_mode_at_exit(void);
-static void cb_clear();
-static void draw_prompt_buf();
+static int grows, gcols;
+static int start_linenoise_editor(void);
 
-int set_raw_mode(int fd, int enable) {
-  static struct termios g_orig_term;
-  static int raw_mode_on = 0;
-  static int atexit_reg = 0;  
-  struct termios raw;
-  
-  if (enable == 0) {
-    if (raw_mode_on && tcsetattr(fd, TCSAFLUSH, &g_orig_term) == 0) {
-      raw_mode_on = 0;
-    }
-    return 0;
+static const char *get_history_path(void) {
+  const char *home;
+
+  if (history_path_ready) return history_path;
+
+  home = getenv("HOME");
+  if (home != NULL && *home != '\0') {
+    snprintf(history_path, sizeof(history_path), "%s/.lilproxy.history", home);
+  } else {
+    snprintf(history_path, sizeof(history_path), ".lilproxy.history");
   }
-
-  if (!isatty(fd)) return -1;
-  if (!atexit_reg) {
-    atexit(disable_raw_mode_at_exit);
-    atexit_reg = 1;
-  }
-
-  if (tcgetattr(fd, &g_orig_term) == -1) return -1;
-
-  raw = g_orig_term;
-  /* input modes: no break (SIGINT), no CR to LF, no parity check, no strip char to 7 bit, no start/stop output control */
-  raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-  /* control modes: set 8 bit chars */
-  raw.c_cflag |= CS8;
-  /* local modes: no echo - canonical off (no kernel buffering) - no extended functions (keep ^Z and ^C working) */
-  raw.c_lflag &= ~(ECHO | ICANON | IEXTEN);
-  /* we want read to return EVERY single byte, without any buffering */
-  raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 0;
-
-  if (tcsetattr(fd, TCSAFLUSH, &raw) == -1) return -1;
-
-  raw_mode_on = 1;
-  cb_clear();
-  draw_prompt_buf();
-  return 0;
+  history_path_ready = 1;
+  return history_path;
 }
 
-static void disable_raw_mode_at_exit(void) {
-  set_raw_mode(STDIN_FILENO, 0);
-}
-
-static void clear_screen() {
-  write(STDOUT_FILENO, CLEAR, 7);
-}
-
-static void clear_cur_line() {
-  write(STDOUT_FILENO, ERASE_LINE, 4);
-}
-
-static void cursor_at_line_start() {
-  write(STDOUT_FILENO, "\r", 1);
-}
-
-static void draw_prompt() {
-  clear_cur_line();
-  cursor_at_line_start();
-  write(STDOUT_FILENO, PROMPT_CHAR" ", 2);
-}
-
-static void draw_prompt_buf() {
-  draw_prompt();
-  if (cb.len > 0) {
-    write(STDOUT_FILENO, cb.cmd, cb.len);
+static void save_history_file(void) {
+  const char *path = get_history_path();
+  if (linenoiseHistorySave(path) == -1) {
+    WARN("cannot save history file: %s", path);
   }
 }
 
-static int get_term_rowcol() {
+static void exit_app(void) {
+  if (ln_started) {
+    linenoiseEditStop(&ln_state);
+    ln_started = 0;
+  }
+  save_history_file();
+  exit(0);
+}
+
+static int get_term_rowcol(void) {
   struct winsize ws;
   if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) return -1;
   gcols = ws.ws_col;
@@ -105,98 +65,199 @@ static int get_term_rowcol() {
   return 0;
 }
 
-/* ========================== history handling ========================== */
-/* This function adds the current buffer content to the history when a command is sent. */
-static int history_add_cmd() {
-  if (h_len > 0 && (strcmp(history[h_len-1]->cmd, cb.cmd) == 0)) return -1;
-  
-  if (history[h_len] != NULL) free(history[h_len]);
-  history[h_len] = malloc(sizeof(struct cmdBuffer));
-  if (history[h_len] == NULL) {perror("malloc history[h_len]"); return -1;}
-    
-  strncpy(history[h_len]->cmd, cb.cmd, cb.len);
-  history[h_len]->cmd[cb.len] = '\0';
-  history[h_len]->len = cb.len;
-  
-  h_len = (h_len+1)%HISTORY_LEN;
-  h_pos = h_len;
-
-  return 0;
-} 
-
-/* This function returns the next cmdBuffer in the global history list. */
-static struct cmdBuffer *history_get_next() {
-  if (h_pos == h_len) return NULL;
-  h_pos = (h_pos+1)%HISTORY_LEN;
-  return history[h_pos];
+static const char *extract_rule_expr(const char *buf, int *has_addrule_prefix) {
+  if (strncmp(buf, "addrule ", 8) == 0) {
+    *has_addrule_prefix = 1;
+    return buf + 8;
+  }
+  *has_addrule_prefix = 0;
+  return buf;
 }
 
-/* This function returns the previous cmdBuffer in the global history list. */
-static struct cmdBuffer *history_get_prev() {
-  size_t prev_idx = (h_pos + HISTORY_LEN - 1) % HISTORY_LEN;
-  if (history[prev_idx] == NULL || prev_idx == h_len) return NULL;
-  h_pos = prev_idx;
-  return history[h_pos];
+static void completion_cb(const char *buf, linenoiseCompletions *lc) {
+  const char *space;
+  size_t prefix_len;
+  int has_addrule_prefix;
+  const char *rule_expr;
+
+  if (buf == NULL) return;
+  space = strchr(buf, ' ');
+  rule_expr = extract_rule_expr(buf, &has_addrule_prefix);
+
+  if (space == NULL) {
+    prefix_len = strlen(buf);
+    for (int i = 0; i < commands_len; i++) {
+      const char *name = commands[i].name;
+      if (strncmp(name, buf, prefix_len) == 0) {
+        linenoiseAddCompletion(lc, name);
+      }
+    }
+    return;
+  }
+
+  if (strncmp(buf, "addrule ", 8) == 0) {
+    static const char *addrule_samples[] = {
+      "addrule <action>:<pattern>[:<response>]",
+      "addrule reply:<pattern>:<response>",
+      "addrule block:<pattern>",
+      "addrule drop:<pattern>",
+      "addrule block:",
+      "addrule drop:",
+      "addrule reply:"
+    };
+    prefix_len = strlen(buf);
+    for (size_t i = 0; i < sizeof(addrule_samples) / sizeof(addrule_samples[0]); i++) {
+      if (strncmp(addrule_samples[i], buf, prefix_len) == 0) {
+        linenoiseAddCompletion(lc, addrule_samples[i]);
+      }
+    }
+    return;
+  }
+
+  if (strncmp(buf, "reply:", 6) == 0 || strncmp(buf, "block:", 6) == 0 || strncmp(buf, "drop:", 5) == 0) {
+    static const char *rule_samples[] = {
+      "reply:<pattern>:<response>",
+      "block:<pattern>",
+      "drop:<pattern>"
+    };
+    prefix_len = strlen(buf);
+    for (size_t i = 0; i < sizeof(rule_samples) / sizeof(rule_samples[0]); i++) {
+      if (strncmp(rule_samples[i], buf, prefix_len) == 0) {
+        linenoiseAddCompletion(lc, rule_samples[i]);
+      }
+    }
+    return;
+  }
+
+  if (strncmp(rule_expr, "reply:", 6) == 0) {
+    const char *pattern = rule_expr + 6;
+    if (*pattern == '\0') return;
+    if (strchr(pattern, ':') == NULL) {
+      char candidate[CMD_MAX + 32];
+      if (has_addrule_prefix) {
+        snprintf(candidate, sizeof(candidate), "addrule reply:%s:<response>", pattern);
+      } else {
+        snprintf(candidate, sizeof(candidate), "reply:%s:<response>", pattern);
+      }
+      if (strncmp(candidate, buf, strlen(buf)) == 0) {
+        linenoiseAddCompletion(lc, candidate);
+      }
+    }
+    return;
+  }
+
+  if (strncmp(buf, "del ", 4) == 0) {
+    char candidate[64];
+    prefix_len = strlen(buf);
+    for (int i = 0; i < bl->nrules; i++) {
+      snprintf(candidate, sizeof(candidate), "del %d", bl->rules[i]->id);
+      if (strncmp(candidate, buf, prefix_len) == 0) {
+        linenoiseAddCompletion(lc, candidate);
+      }
+    }
+  }
 }
 
-/* ========================== Command Buffer ========================== */
-/* Append a char to the cmd buffer if there's enough space. */
-static void cb_append(char c) {
-  if (cb.len >= CMD_MAX - 1) return;
-  cb.cmd[cb.len++] = c;
-  cb.cmd[cb.len] = '\0';
+static char *hints_cb(const char *buf, int *color, int *bold) {
+  int has_addrule_prefix;
+  const char *rule_expr;
+
+  if (buf == NULL) return NULL;
+  rule_expr = extract_rule_expr(buf, &has_addrule_prefix);
+  (void)has_addrule_prefix;
+
+  *color = 90;
+  *bold = 0;
+
+  if (strchr(buf, ' ') == NULL) {
+    size_t prefix_len = strlen(buf);
+    for (int i = 0; i < commands_len; i++) {
+      const char *name = commands[i].name;
+      size_t name_len = strlen(name);
+      if (name_len > prefix_len && strncmp(name, buf, prefix_len) == 0) {
+        return strdup(name + prefix_len);
+      }
+    }
+    return NULL;
+  }
+
+  if (strncmp(buf, "addrule ", 8) == 0) {
+    static const char *addrule_samples[] = {
+      "addrule <action>:<pattern>[:<response>]",
+      "addrule reply:<pattern>:<response>",
+      "addrule block:<pattern>",
+      "addrule drop:<pattern>",
+      "addrule block:",
+      "addrule drop:",
+      "addrule reply:"
+    };
+    size_t prefix_len = strlen(buf);
+    for (size_t i = 0; i < sizeof(addrule_samples) / sizeof(addrule_samples[0]); i++) {
+      size_t sample_len = strlen(addrule_samples[i]);
+      if (sample_len > prefix_len && strncmp(addrule_samples[i], buf, prefix_len) == 0) {
+        return strdup(addrule_samples[i] + prefix_len);
+      }
+    }
+  }
+
+  if (strncmp(buf, "reply:", 6) == 0 || strncmp(buf, "block:", 6) == 0 || strncmp(buf, "drop:", 5) == 0) {
+    static const char *rule_samples[] = {
+      "reply:<pattern>:<response>",
+      "block:<pattern>",
+      "drop:<pattern>"
+    };
+    size_t prefix_len = strlen(buf);
+    for (size_t i = 0; i < sizeof(rule_samples) / sizeof(rule_samples[0]); i++) {
+      size_t sample_len = strlen(rule_samples[i]);
+      if (sample_len > prefix_len && strncmp(rule_samples[i], buf, prefix_len) == 0) {
+        return strdup(rule_samples[i] + prefix_len);
+      }
+    }
+  }
+
+  if (strncmp(rule_expr, "reply:", 6) == 0) {
+    const char *pattern = rule_expr + 6;
+    if (*pattern == '\0') return strdup("<pattern>:<response>");
+    if (strchr(pattern, ':') == NULL) return strdup(":<response>");
+    return NULL;
+  }
+
+  if (strncmp(rule_expr, "block:", 6) == 0) {
+    const char *pattern = rule_expr + 6;
+    if (*pattern == '\0') return strdup("<pattern>");
+    return NULL;
+  }
+
+  if (strncmp(rule_expr, "drop:", 5) == 0) {
+    const char *pattern = rule_expr + 5;
+    if (*pattern == '\0') return strdup("<pattern>");
+    return NULL;
+  }
+
+  return NULL;
 }
 
-/* Delete a char from the command buffer. */
-static void cb_del() {
-  if (cb.len == 0) return;
-  cb.len--;
-  cb.cmd[cb.len] = '\0';
+static void free_hints_cb(void *ptr) {
+  free(ptr);
 }
 
-/* Initialize the command buffer and its length to 0. */
-static void cb_clear() {
-  cb.len = 0;
-  for (size_t i = 0; i < CMD_MAX; i++) cb.cmd[i] = '\0';
-}
-
-/* This function update the global command buffer fields with data from the current history selected entry. */
-static void update_cb_history(struct cmdBuffer *buf) {
-  memset(cb.cmd, 0, sizeof(cb.cmd));
-  strncpy(cb.cmd, buf->cmd, buf->len);
-  cb.len = buf->len;
-}
-
-/* Print a binary string parsing non-printable raw bytes as byte string format. It also truncates the output if it's too long */
 static void print_bin(const char *input, size_t len) {
   if (get_term_rowcol() == -1) return;
   size_t max_len = (gcols > 20) ? (gcols - 40) : gcols;
   size_t shown = 0;
 
   for (size_t i = 0; i < len; i++) {
-    unsigned char b = input[i];
+    unsigned char b = (unsigned char)input[i];
     if (shown >= max_len) {
-      printf(COLOR_WARN "...[truncated %zu bytes]" RESET, len-i);
+      printf(COLOR_WARN "...[truncated %zu bytes]" RESET, len - i);
       break;
     }
 
     switch (b) {
-      case '\n':
-        printf("\\n");
-        shown += 2;
-        break;
-      case '\r':
-        printf("\\r");
-        shown += 2;
-        break;
-      case '\t':
-        printf("\\t");
-        shown += 2;
-        break;
-      case '\\':
-        printf("\\\\");
-        shown += 2;
-        break;
+      case '\n': printf("\\n"); shown += 2; break;
+      case '\r': printf("\\r"); shown += 2; break;
+      case '\t': printf("\\t"); shown += 2; break;
+      case '\\': printf("\\\\"); shown += 2; break;
       default:
         if (isprint(b)) {
           fputc(b, stdout);
@@ -210,10 +271,9 @@ static void print_bin(const char *input, size_t len) {
   }
 }
 
-/* ========================== Commands callbacks ========================== */
-static void print_rules() {
+static void print_rules(void) {
   if (bl->nrules == 0) {
-    printf(COLOR_INFO "No rules loaded." RESET "\r\n");
+    printf(COLOR_INFO "No rules loaded." RESET "\n");
     fflush(stdout);
     return;
   }
@@ -221,200 +281,188 @@ static void print_rules() {
   for (int i = 0; i < bl->nrules; i++) {
     rule *r = bl->rules[i];
     printf(DIM "#%d " RESET, r->id);
+
     if (r->action == ACTION_REPLY) {
       printf("reply:");
-      print_bin(r->pattern, r->p_len);
+      print_bin(r->pattern, (size_t)r->p_len);
       printf(":");
       if (r->reply_src == REPLY_SRC_FILE) {
         printf("@file=%s", r->r_file_path);
-      } else print_bin(r->response, r->r_len);
-    }
-    else if (r->action == ACTION_BLOCK) {
+      } else {
+        print_bin(r->response, (size_t)r->r_len);
+      }
+    } else if (r->action == ACTION_BLOCK) {
       printf("block:");
-      print_bin(r->pattern, r->p_len);
+      print_bin(r->pattern, (size_t)r->p_len);
     } else if (r->action == ACTION_DROP) {
       printf("drop:");
-      print_bin(r->pattern, r->p_len);
+      print_bin(r->pattern, (size_t)r->p_len);
     }
-    printf("\r\n");
-  }   
+    printf("\n");
+  }
+
   fflush(stdout);
 }
 
-static void print_help() {
-  printf(COLOR_HEADER "Available commands" RESET "\r\n");
-  printf(COLOR_INFO "  addrule <action>:<pattern>:[<response>]" RESET " - add a new rule\r\n");
-  printf(COLOR_INFO "  del <rule_id>" RESET " - delete a rule\r\n");
-  printf(COLOR_INFO "  lsrules" RESET " - list current blacklist\r\n");
-  printf(COLOR_INFO "  clear" RESET " - clear screen\r\n");
-  printf(COLOR_INFO "  help" RESET " - show this help\r\n");
+static void print_help(void) {
+  printf("Available commands\n");
+  printf("  addrule <action>:<pattern>:[<response>] - add a new rule\n");
+  printf("  del <rule_id> - delete a rule\n");
+  printf("  lsrules - list current blacklist\n");
+  printf("  clear - clear screen\n");
+  printf("  exit - terminate proxy\n");
+  printf("  help - show this help\n");
 }
 
-/* This function add a new rule to the global blacklist */
-static void add_rule() {
+static void add_rule_cmd(const char *args) {
   char err[ERROR_LEN];
   rule *r = NULL;
-  char *args = cb.cmd + 8;
+
+  if (args == NULL || *args == '\0') {
+    ERR("missing rule definition");
+    return;
+  }
 
   if (rule_parse_line(args, &r, err) == -1) {
-    ERR("error: %s", err);
+    ERR("%s", err);
     return;
   }
 
   if (add_rule_to_bl(r) == -1) return;
-  printf(COLOR_SUCCESS "[+] Rule successfully added" RESET "\r\n");
-  return;
+  printf(COLOR_SUCCESS "[+] Rule successfully added" RESET "\n");
 }
 
-/* Delete a rule from blacklist based on provided ID */
-static void del_rule() {
-  if (cb.len < 5) {
-    ERR("error: missing id");
-    return;
-  }
-  
-  char *arg = cb.cmd + 4;
+static void del_rule_cmd(const char *args) {
   char *end;
-  int id = strtol(arg, &end, 10);
+  long id;
 
-  if (end == arg || *end != '\0') {
-    ERR("error: invalid id");
+  if (args == NULL || *args == '\0') {
+    ERR("missing id");
     return;
   }
 
-  if (errno == ERANGE) {
-    ERR("error: id out of max range");
+  errno = 0;
+  id = strtol(args, &end, 10);
+  if (errno == ERANGE || end == args || *end != '\0') {
+    ERR("invalid id");
     return;
   }
-  
-  if(del_rule_by_id(id) == -1) {
-    WARN("no rule found for id=%d", id);
-    return; 
-  }  
 
-  printf(COLOR_SUCCESS "[+] Rule successfully deleted" RESET "\r\n");
+  if (del_rule_by_id((int)id) == -1) {
+    WARN("no rule found for id=%ld", id);
+    return;
+  }
+
+  printf(COLOR_SUCCESS "[+] Rule successfully deleted" RESET "\n");
 }
 
-static void add_command(char *command_name, void (*callback)(void)) {
+static void add_command(char *name, void (*callback)(void)) {
   if (commands_len >= MAX_COMMANDS) return;
-  commands[commands_len].name = command_name;  
+  commands[commands_len].name = name;
   commands[commands_len].callback = callback;
   commands_len++;
 }
 
-/* This function simply calls the callback of a command based on the command name received as argument */
-static void exec_command(const char *command) {
-  for(int i = 0; i < commands_len; i++) {
-    if (strcmp(command, commands[i].name) == 0) {
+static void cmd_add_wrapper(void) {}
+static void cmd_del_wrapper(void) {}
+static void cmd_lsrules_wrapper(void) { print_rules(); }
+static void cmd_clear_wrapper(void) { linenoiseClearScreen(); }
+static void cmd_exit_wrapper(void) { exit_app(); }
+static void cmd_help_wrapper(void) { print_help(); }
+
+static void exec_command_line(char *line) {
+  char *cmd = strtok(line, " ");
+  char *args = strtok(NULL, "");
+
+  if (cmd == NULL) return;
+  if (args != NULL) {
+    while (*args == ' ') args++;
+  }
+
+  if (strcmp(cmd, "addrule") == 0) {
+    add_rule_cmd(args);
+    return;
+  }
+  if (strcmp(cmd, "del") == 0) {
+    del_rule_cmd(args);
+    return;
+  }
+
+  for (int i = 0; i < commands_len; i++) {
+    if (strcmp(cmd, commands[i].name) == 0) {
       commands[i].callback();
       return;
     }
   }
-  ERR("unknown command: %s", command);
+
+  ERR("unknown command: %s", cmd);
 }
 
-/* This function call the exec_command() with the right command name */
-static void parse_command() {
-  char *cmd = strtok(cb.cmd, " ");
-  if (cmd == NULL) return;
-  exec_command(cmd);
-}
-
-void commands_init() {
-  add_command("addrule", add_rule);
-  add_command("del", del_rule);
-  add_command("lsrules", print_rules);
-  add_command("clear", clear_screen);
-  add_command("help", print_help);
-}
-
-/* ========================== Input handling and command parsing ========================== */
-/* This function parse the global command buffer calling functions based on its content. */
-
-/* This function reads a single char from stdin and returns it. It aso handle basic escape sequences parsing. */
-static int read_key() {
-  int nread;
-  char c;
-
-  while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-    if (nread == -1) {ERR("read"); return -1;}
+static int start_linenoise_editor(void) {
+  if (ln_started) return 0;
+  if (linenoiseEditStart(&ln_state, STDIN_FILENO, STDOUT_FILENO, ln_buf, sizeof(ln_buf), "> ") == -1) {
+    return -1;
   }
-  
-  /* Parse escape sequence. */
-  if (c == '\x1b') {
-    char seq[3];
-    if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
-    if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
-    if (seq[0] == '[') {
-      switch (seq[1]) {
-        case 'A': return ARROW_UP;
-        case 'B': return ARROW_DOWN;
-        case 'C': return ARROW_RIGHT;
-        case 'D': return ARROW_LEFT;
-      }
+  ln_started = 1;
+  return 0;
+}
+
+void commands_init(void) {
+  if (ln_initialized) return;
+
+  commands_len = 0;
+  add_command("lsrules", cmd_lsrules_wrapper);
+  add_command("clear", cmd_clear_wrapper);
+  add_command("help", cmd_help_wrapper);
+  add_command("exit", cmd_exit_wrapper);
+
+  /* Keep placeholders for commands parsed with arguments. */
+  add_command("addrule", cmd_add_wrapper);
+  add_command("del", cmd_del_wrapper);
+
+  linenoiseSetCompletionCallback(completion_cb);
+  linenoiseSetHintsCallback(hints_cb);
+  linenoiseSetFreeHintsCallback(free_hints_cb);
+  linenoiseHistorySetMaxLen(HISTORY_LEN);
+  linenoiseHistoryLoad(get_history_path());
+  ln_initialized = 1;
+  if (start_linenoise_editor() == -1) {
+    ERR("linenoise init failed");
+  }
+}
+
+int read_command(void) {
+  char *line;
+
+  if (!ln_initialized) commands_init();
+  if (start_linenoise_editor() == -1) return -1;
+
+  line = linenoiseEditFeed(&ln_state);
+  if (line == linenoiseEditMore) return 0;
+
+  linenoiseEditStop(&ln_state);
+  ln_started = 0;
+
+  if (line == NULL) {
+    if (errno == EAGAIN) exit_app(); /* Ctrl-C */
+    if (errno == EWOULDBLOCK || errno == ENOENT) {
+      return start_linenoise_editor();
     }
-    return '\x1b';
+    return -1;
   }
 
-  if (c == '\b' || c == 127) return DEL_KEY;
-    
-  return c;
+  if (*line != '\0') {
+    linenoiseHistoryAdd(line);
+    save_history_file();
+    exec_command_line(line);
+  }
+  linenoiseFree(line);
+
+  return start_linenoise_editor();
 }
 
-/*
-  This function reads from stdin, handling one command line in terminal raw mode.
-*/
-int read_command() {
-  int ch = read_key();
-
-  if (ch == -1) return -1;
-
-  /* handle command submission */ 
-  if (ch == '\r' || ch == '\n') {
-    cb.cmd[cb.len] = '\0';
-    write(STDOUT_FILENO, "\r\n", 2);
-
-    if (history_add_cmd() == -1) return -1;
-    parse_command();
-    cb_clear();
-    draw_prompt_buf();
-  }
-  
-  if (ch == DEL_KEY && cb.len > 0) {
-    cb_del();
-    draw_prompt_buf();
-  }
-
-  /* append input char to global command buffer and write it on screen. */
-  if (isprint((unsigned char)ch) && cb.len < CMD_MAX - 1) {
-    cb_append(ch);
-    write(STDOUT_FILENO, &ch, 1);
-  }
-
-  /* ctrl keys handling */
-  if (ch == CTRL_KEY('l')) {
-    clear_screen();
-    draw_prompt();
-  }
-
-  /* history keys handling */
-  if (ARROW_KEY(ch)) {
-    struct cmdBuffer *buf = NULL;
-    switch (ch) {
-      case ARROW_UP:
-        buf = history_get_prev();
-        break;
-      case ARROW_DOWN:
-        buf = history_get_next();
-        if (buf == NULL) draw_prompt();
-        break;
-    }
-    if (buf != NULL) {
-      draw_prompt();
-      write(STDOUT_FILENO, buf->cmd, buf->len);
-      update_cb_history(buf);
-    }
-  }
-  
+int set_raw_mode(int fd, int enable) {
+  (void)fd;
+  (void)enable;
   return 0;
 }

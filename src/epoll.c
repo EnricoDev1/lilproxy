@@ -1,10 +1,10 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 
-#include <proxy/state.h>
-#include <proxy/net.h>
-#include <proxy/commands.h>
-#include <proxy/epoll.h>
+#include <lilproxy/state.h>
+#include <lilproxy/net.h>
+#include <lilproxy/commands.h>
+#include <lilproxy/epoll.h>
 
 /* add a new socket file descriptor to epfd */
 static int ep_add_fd(int epfd, int fd, uint32_t events) {

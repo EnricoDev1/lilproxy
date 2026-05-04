@@ -10,8 +10,8 @@
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 
-#include <proxy/net.h>
-#include <proxy/state.h>
+#include <lilproxy/net.h>
+#include <lilproxy/state.h>
 
 /* Init the TCP connection and returns the assigned server socket file descriptor. */
 int server_init(int port) {
