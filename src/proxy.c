@@ -7,6 +7,8 @@
 #include <lilproxy/proxy.h>
 #include <lilproxy/rules.h>
 #include <lilproxy/types.h>
+#include <lilproxy/args.h>
+#include <lilproxy/commands.h>
 
 proxyContext *ctx;
 proxyTarget *target;
@@ -14,7 +16,7 @@ blacklist *bl;
 appConfig *cfg;
 
 /* Allocate the proxy context struct with error handling */ 
-static proxyContext *ctx_malloc() {
+static proxyContext *new_context() {
   proxyContext *ctx = malloc(sizeof(*ctx));
   if (ctx == NULL) {
     perror("malloc ctx");
@@ -23,7 +25,7 @@ static proxyContext *ctx_malloc() {
   return ctx;
 }
 
-appConfig *cfg_init() {
+appConfig *new_config() {
   appConfig *cfg = malloc(sizeof(*cfg));
 
   if (cfg == NULL) {
@@ -40,35 +42,63 @@ appConfig *cfg_init() {
 }
 
 /* Initialize the proxy context to default values. */
-int connection_init() {
-  ctx = ctx_malloc();
-  if (ctx == NULL) return -1;
-  memset(ctx, 0, sizeof(*ctx));
-  
-  /* we don't have any client connected yet */
-  ctx->numclients = 0;
+int init_listeners() {
+  ctx->numclients = 0;  
   ctx->serversock = server_init(cfg->l_port); 
+  ctx->commandsock = server_init(cfg->c_port);
+
+  printf("%d-%d\r\n", cfg->c_port, ctx->commandsock);
   
   if (ctx->serversock == -1) {
-    perror("Creating listening socket");
+    ERR("unable to create server socket");
     return -1;
   }
+
+  if (ctx->commandsock == -1) {
+    ERR("unable to create server config socket");
+    return -1;
+  }
+  
   return 0;
 }
 
-/* Initialize proxy state with values received from command line. */
-void proxy_init() {
+/* allocate config related structs */
+int init_runtime() {
+  cfg = new_config();
+  if (cfg == NULL) {ERR("unable to init lilproxy config"); return -1;}
+  
+  ctx = new_context();
+  if (ctx == NULL) {ERR("unable to malloc lilproxy ctx"); return -1;}
+
   target = malloc(sizeof(*target));
+  if (target == NULL) {ERR("unable to malloc target"); return -1;}
+
   memset(target, 0, sizeof(*target));
-  snprintf(target->addr, ADDR_LEN, "%s", cfg->addr);
-  target->port = cfg->t_port;
+  memset(ctx, 0, sizeof(*ctx));
+  return 0;
+}
+
+/* Initialize all the proxy configs, using helper functions. */
+int setup_app(int argc, char *argv[]) {
+  if (init_runtime() == -1) return -1;  
+  if (parse_args(argc, argv) == -1) return -1;
+    
+  if (cfg->l_port == 0 || target->port == 0) {
+    ERR("Usage: %s -l <local-port> -a <target-addr> -t <target-port> [-r <rules-file>]", argv[0]);
+    return -1;
+  }
+  if (init_listeners() == -1) return -1;
+  load_rules();
+  commands_init();
+
+  return 0;
 }
 
 /*
   Send data received from src to dst. It handles partial writes by looping untile all bytes have been sent. 
   Returns -1 on disconnections/errors, 0 otherwise.
 */
-int relay(int src, int dst, int sender) {
+int relay_once(int src, int dst, int sender) {
   unsigned char buf[MAX_READ_SIZE];
   int n = read(src, buf, sizeof(buf)-1);
   
@@ -106,4 +136,3 @@ int relay(int src, int dst, int sender) {
   
   return 0;
 }
-

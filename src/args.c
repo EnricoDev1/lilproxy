@@ -19,6 +19,11 @@ static int parse_port(const char *port) {
   return (int)val;
 }
 
+static void set_defaults() {
+  snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", "rules.txt");
+  cfg->c_port = 9090;
+}
+
 /* Parse command line args: target ADDRESS and PORT */
 int parse_args(int argc, char *argv[]) {
   static struct option long_opt[] = {
@@ -26,21 +31,24 @@ int parse_args(int argc, char *argv[]) {
     {"target-addr", required_argument, 0, 'a'},
     {"port", required_argument, 0, 'l'},
     {"rules-file", optional_argument, 0, 'r'},
+    {"config-port", optional_argument, 0, 'c'},
     {0, 0, 0, 0}
   };
   
   int idx = 0;
   int opt;
-  
-  snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", "rules.txt");
-  while((opt = getopt_long(argc, argv, "t:a:l:", long_opt, &idx)) != -1) {
+
+  if (target == NULL) return -1;
+
+  set_defaults();  
+  while((opt = getopt_long(argc, argv, "t:a:l:r:c:", long_opt, &idx)) != -1) {
     switch(opt) {
       case 't':
-        cfg->t_port = parse_port(optarg);
-        if (cfg->t_port == -1) return -1;
+        target->port = parse_port(optarg);
+        if (target->port == -1) return -1;
         break;
       case 'a':
-        snprintf(cfg->addr, ADDR_LEN, "%s", optarg);
+        snprintf(target->addr, ADDR_LEN, "%s", optarg);
         break;
       case 'l':
         cfg->l_port = parse_port(optarg);
@@ -48,6 +56,9 @@ int parse_args(int argc, char *argv[]) {
         break;
       case 'r':
         snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", optarg);
+        break;
+      case 'c':
+        cfg->c_port = parse_port(optarg);
         break;
       case '?':
         return -1;

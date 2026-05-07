@@ -108,6 +108,10 @@ static int handle_control_event(int epfd, int fd) {
     return 1;
   }
 
+  if (fd == ctx->commandsock) {
+    ;    
+  }
+
   if (fd == STDIN_FILENO) {
     read_command();
     return 1;
@@ -149,7 +153,7 @@ static void handle_endpoint_ev(int epfd, int fd, uint32_t ev) {
   if (!(ev & EPOLLIN)) return;
   
   /* everything is okay, role will be used as sender */
-  if (relay(rc.srcfd, rc.dstfd, rc.role) == -1) close_and_clean(epfd, rc.idx);
+  if (relay_once(rc.srcfd, rc.dstfd, rc.role) == -1) close_and_clean(epfd, rc.idx);
 }
 
 /* Iterates all ready events, performing differents actions based on event type. */
