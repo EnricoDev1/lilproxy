@@ -99,13 +99,9 @@ static int tcp_conn_start(const char *addr, int port, int *is_connecting) {
 int target_conn_finish(int fd) {
   int err = 0;
   socklen_t len = sizeof(err);
-  int flags;
 
   if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == -1) return -1;
   if (err != 0) {errno = err; return -1;}
-  flags = fcntl(fd, F_GETFL);
-  if (flags == -1) return -1;
-  if (fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1) return -1;
 
   return 0;
 }

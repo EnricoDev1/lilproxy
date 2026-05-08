@@ -1,5 +1,5 @@
-#ifndef PROXY_RULES_H
-#define PROXY_RULES_H
+#ifndef LILPROXY_RULES_H
+#define LILPROXY_RULES_H
 
 #include <time.h>
 

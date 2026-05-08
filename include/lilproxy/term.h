@@ -1,5 +1,5 @@
-#ifndef PROXY_TERM_H
-#define PROXY_TERM_H
+#ifndef LILPROXY_TERM_H
+#define LILPROXY_TERM_H
 
 #define RESET               "\033[0m"
  

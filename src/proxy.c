@@ -45,10 +45,7 @@ appConfig *new_config() {
 int init_listeners() {
   ctx->numclients = 0;  
   ctx->serversock = server_init(cfg->l_port); 
-  ctx->commandsock = server_init(cfg->c_port);
 
-  printf("%d-%d\r\n", cfg->c_port, ctx->commandsock);
-  
   if (ctx->serversock == -1) {
     ERR("unable to create server socket");
     return -1;
@@ -83,12 +80,13 @@ int setup_app(int argc, char *argv[]) {
   if (init_runtime() == -1) return -1;  
   if (parse_args(argc, argv) == -1) return -1;
     
-  if (cfg->l_port == 0 || target->port == 0) {
+  if (cfg->l_port == 0 || target->port == 0 || target->addr[0] == '\0') {
     ERR("Usage: %s -l <local-port> -a <target-addr> -t <target-port> [-r <rules-file>]", argv[0]);
     return -1;
   }
+  
   if (init_listeners() == -1) return -1;
-  load_rules();
+  if (load_rules() == -1) return -1;
   commands_init();
 
   return 0;

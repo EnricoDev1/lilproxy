@@ -416,8 +416,6 @@ void commands_init(void) {
   add_command("clear", cmd_clear_wrapper);
   add_command("help", cmd_help_wrapper);
   add_command("exit", cmd_exit_wrapper);
-
-  /* Keep placeholders for commands parsed with arguments. */
   add_command("add", cmd_add_wrapper);
   add_command("del", cmd_del_wrapper);
 

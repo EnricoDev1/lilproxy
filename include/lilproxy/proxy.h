@@ -1,15 +1,14 @@
-#ifndef PROXY_PROXY_H
-#define PROXY_PROXY_H
+#ifndef LILPROXY_PROXY_H
+#define LILPROXY_PROXY_H
 
 #include "types.h"
 
 typedef struct _APP_CONFIG {
   char *rules_file;
   int l_port; // listen port
-  int c_port; // command port
 } appConfig;
 
-typedef struct _PROXY_CONTENT {
+typedef struct _LILPROXY_CONTENT {
   int serversock;
   int commandsock;
   int numclients;
@@ -18,7 +17,7 @@ typedef struct _PROXY_CONTENT {
   int t_status[MAX_CLIENTS];
 } proxyContext;
 
-typedef struct _PROXY_TARGET {
+typedef struct _LILPROXY_TARGET {
   char addr[ADDR_LEN];
   int port;
 } proxyTarget;

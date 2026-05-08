@@ -1,5 +1,5 @@
-#ifndef PROXY_STATE_H
-#define PROXY_STATE_H
+#ifndef LILPROXY_STATE_H
+#define LILPROXY_STATE_H
 
 #include "proxy.h"
 #include "rules.h"

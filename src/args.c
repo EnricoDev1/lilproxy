@@ -10,8 +10,10 @@
 /* Safe parse port from string to int. */
 static int parse_port(const char *port) {
   char *end;
+  
+  errno = 0;
   long val = strtol(port, &end, 10);
-
+  
   if (*end != '\0' || errno == ERANGE || val < 0 || val > 65535) {
     ERR("Port must be a number between 0-65535");
     return -1;
@@ -19,9 +21,8 @@ static int parse_port(const char *port) {
   return (int)val;
 }
 
-static void set_defaults() {
+static inline void set_defaults() {
   snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", "rules.txt");
-  cfg->c_port = 9090;
 }
 
 /* Parse command line args: target ADDRESS and PORT */
@@ -31,7 +32,6 @@ int parse_args(int argc, char *argv[]) {
     {"target-addr", required_argument, 0, 'a'},
     {"port", required_argument, 0, 'l'},
     {"rules-file", optional_argument, 0, 'r'},
-    {"config-port", optional_argument, 0, 'c'},
     {0, 0, 0, 0}
   };
   
@@ -41,7 +41,7 @@ int parse_args(int argc, char *argv[]) {
   if (target == NULL) return -1;
 
   set_defaults();  
-  while((opt = getopt_long(argc, argv, "t:a:l:r:c:", long_opt, &idx)) != -1) {
+  while((opt = getopt_long(argc, argv, "t:a:l:r::", long_opt, &idx)) != -1) {
     switch(opt) {
       case 't':
         target->port = parse_port(optarg);
@@ -56,9 +56,6 @@ int parse_args(int argc, char *argv[]) {
         break;
       case 'r':
         snprintf(cfg->rules_file, MAX_FILENAME_LEN, "%s", optarg);
-        break;
-      case 'c':
-        cfg->c_port = parse_port(optarg);
         break;
       case '?':
         return -1;

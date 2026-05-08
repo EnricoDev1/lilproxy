@@ -137,7 +137,7 @@ int rule_reply_refresh(rule *r, char *err) {
   }
 
   long sz = ftell(fp);
-  if (sz < 0 || sz > MAX_PATTERN_LEN) {
+  if (sz < 0 || sz > MAX_RESPONSE_LEN) {
     build_error(err, "invalid file size %s", r->r_file_path);
     fclose(fp);
     return -1;
@@ -159,6 +159,7 @@ int rule_reply_refresh(rule *r, char *err) {
     return -1;
   }
   fclose(fp);
+  buf[sz] = '\0';
 
   // in case everything went good, we update the rule data with the changed file ones
   free(r->response);
@@ -250,7 +251,7 @@ static int reallocate_rules() {
 /* This function append a given rule to the blacklist, allocating more space if needed. */
 int add_rule_to_bl(rule *r) {
   if (bl->nrules == bl->capacity)
-    if (reallocate_rules() == -1) {ERR(COLOR_ERROR "Failed to add rule" RESET); return -1;}
+    if (reallocate_rules() == -1) { ERR("Failed to add rule" ); return -1;}
   r->id = next_rule_id++;
   bl->rules[bl->nrules++] = r;
 
@@ -281,8 +282,11 @@ int load_rules() {
   if (bl == NULL) return -1;
   
   FILE *fp = fopen(cfg->rules_file, "r");
-  if (fp == NULL) {ERR("Error while opening rules file"); return -1;}
-  
+  if (fp == NULL) {
+    WARN("no initial rules file provided.");
+    return 0;
+  }
+
   /* Read rules from file and fill the blacklist */
   char line[MAX_PATTERN_LEN];
   char err[ERROR_LEN];
@@ -292,11 +296,17 @@ int load_rules() {
     rule *r = NULL;
     
     if (rule_parse_line(line, &r, err) == -1) {
-      ERR("error at %s:%d - %s", cfg->rules_file, lcount+1, err);
+      ERR("at %s:%d - %s", cfg->rules_file, lcount+1, err);
+      fclose(fp);
       return -1;
     }
-    if (add_rule_to_bl(r) == -1) return -1;
+    if (add_rule_to_bl(r) == -1) {
+      fclose(fp);
+      return -1;
+    }
+    lcount++;
   }
+
   fclose(fp);
   return 0;
 }

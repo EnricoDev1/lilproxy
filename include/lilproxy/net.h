@@ -1,5 +1,5 @@
-#ifndef PROXY_NET_H
-#define PROXY_NET_H
+#ifndef LILPROXY_NET_H
+#define LILPROXY_NET_H
 
 typedef enum _TARGET_STATUS {
   CONNECTED = 0,

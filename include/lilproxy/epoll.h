@@ -1,3 +1,6 @@
+#ifndef LILPROXY_EPOLL_H
+#define LILPROXY_EPOLL_H
+
 #include <sys/epoll.h>
 
 #include <lilproxy/types.h>
@@ -14,3 +17,5 @@ typedef struct _RELAY_CTX {
 
 int epoll_init();
 void handle_events(int epfd, struct epoll_event *evts, int ne);
+
+#endif

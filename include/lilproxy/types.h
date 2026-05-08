@@ -1,5 +1,5 @@
-#ifndef PROXY_TYPES_H
-#define PROXY_TYPES_H
+#ifndef LILPROXY_TYPES_H
+#define LILPROXY_TYPES_H
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -12,7 +12,6 @@
 #define DEFAULT_INITIAL_CAP 20
 #define ERROR_LEN 128
 
-#define CONFIG_FILENAME "rules.txt"
 #define MAX_FILENAME_LEN 128
 
 #include <lilproxy/term.h>
