@@ -3,12 +3,13 @@
 
 typedef enum _TARGET_STATUS {
   CONNECTED = 0,
-  CONNECTING  
+  CONNECTING
 } target_status;
 
-int server_init(int port);
-int accept_client();
-void close_session(int idx);
-int target_conn_finish(int fd);
+int server_init();
+int accept_proxy_pair(int *client_fd, int *target_fd, target_status *status);
+int accept_command_client();
+int check_target_connect(int fd);
+int command_sock_init();
 
 #endif

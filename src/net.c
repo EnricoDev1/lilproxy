@@ -9,28 +9,68 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
+#include <sys/un.h>
 
 #include <lilproxy/net.h>
 #include <lilproxy/state.h>
 
+int bind_and_listen(struct sockaddr *sockaddr, socklen_t len, int fd) {
+  if (bind(fd, sockaddr, len) == -1) {
+    ERR("unable to bind socket (fd = %d)", fd);
+    close(fd);
+    return -1;
+  }
+
+  if (listen(fd, 3) == -1) {
+    ERR("unable to listen (fd = %d)", fd);
+    close(fd);
+    return -1;
+  }
+  return 0;
+}
+
 /* Init the TCP connection and returns the assigned server socket file descriptor. */
-int server_init(int port) {
+int server_init() {
   struct sockaddr_in sa;
-  int sfd, optval = 1;
+  int optval = 1;
   
-  if ((sfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) return -1;
+  int sfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sfd < 0) return -1;
+  
   setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
   memset(&sa, 0, sizeof(sa));
   
   sa.sin_family = AF_INET;
   sa.sin_addr.s_addr = INADDR_ANY;
-  sa.sin_port = htons(port);
+  sa.sin_port = htons(cfg->l_port);
 
-  if (bind(sfd, (struct sockaddr*)&sa, sizeof(sa)) == -1 || listen(sfd, 3)) {
+  if (bind_and_listen((struct sockaddr *)&sa, sizeof(sa), sfd) < 0) return -1;
+    
+  return sfd;
+}
+
+/* Init the UNIX socket server and return the assigned file descriptor */
+int command_sock_init() {
+  int sfd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (sfd < 0) {
+    perror("socket");
+    return -1;
+  }
+
+  struct sockaddr_un sa;
+  memset(&sa, 0, sizeof(sa));
+  
+  sa.sun_family = AF_UNIX;
+  strcpy(sa.sun_path, "/tmp/lilproxy.sock");
+
+  if (unlink("/tmp/lilproxy.sock") == -1 && errno != ENOENT) {
+    ERR("unable to unlink old command socket");
     close(sfd);
     return -1;
   }
-  
+
+  if (bind_and_listen((struct sockaddr *)&sa, sizeof(sa), sfd)) return -1;
+    
   return sfd;
 }
 
@@ -38,7 +78,7 @@ int server_init(int port) {
   This function stops read/write/connect from being blocking: if there's not ready data they set errno = EAGAIN.
   It also prevents TCP from "packing" data, reduce delay. 
 */
-static int socketSetNonBlockNoDelay(int fd) {
+static int socket_set_non_block(int fd) {
   int flags;
   int y = 1;
 
@@ -56,7 +96,7 @@ static int socketSetNonBlockNoDelay(int fd) {
   
   Returns -1 on error, socket file descriptor used for connection to the remote server on success.
 */
-static int tcp_conn_start(const char *addr, int port, int *is_connecting) {
+static int tcp_conn_start(const char *addr, int port, int *status) {
   struct addrinfo hints, *servinfo, *p;
   char portstr[6];
   int fd = -1;
@@ -73,16 +113,16 @@ static int tcp_conn_start(const char *addr, int port, int *is_connecting) {
     fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
     if (fd == -1) continue;
     
-    if (socketSetNonBlockNoDelay(fd) == -1) { close(fd); continue; }
+    if (socket_set_non_block(fd) == -1) { close(fd); continue; }
 
     if (connect(fd, p->ai_addr, p->ai_addrlen) == 0) {
-      *is_connecting = CONNECTED;
+      *status = CONNECTED;
       freeaddrinfo(servinfo);
       return fd;      
     }
 
     if (errno == EINPROGRESS) {
-      *is_connecting = CONNECTING;
+      *status = CONNECTING;
       freeaddrinfo(servinfo);
       return fd;
     }
@@ -95,8 +135,7 @@ static int tcp_conn_start(const char *addr, int port, int *is_connecting) {
   return -1;
 }
 
-/* returns 0 if  */
-int target_conn_finish(int fd) {
+int check_target_connect(int fd) {
   int err = 0;
   socklen_t len = sizeof(err);
 
@@ -106,54 +145,63 @@ int target_conn_finish(int fd) {
   return 0;
 }
 
+/* This function accepts a new client from the UNIX command socket, returning the associated file descriptor. */
+int accept_command_client() {
+  int cfd;
+  struct sockaddr_un sa;
+  socklen_t slen = sizeof(sa);
+
+  cfd = accept(ctx->commandsock, (struct sockaddr*)&sa, &slen);
+
+  if (cfd < 0) {
+    ERR("unable to accept command client");
+    return -1;
+  }
+  
+  return cfd;
+}
+
 /*
-  This function uses accept() to accept a new client who wants to connect, pairing it with its target fd.
-  It also updates the global context with a new state.
+  Accept a client and open the matching target connection. The caller owns
+  registering and tracking both fds.
   
-  It returns -1 on error, otherwise the new client socket file descriptor.
+  It returns 0 on success, -1 on error.
 */
-int accept_client() {
-  if (ctx->numclients >= MAX_CLIENTS) return -1;
-  
+int accept_proxy_pair(int *client_fd, int *target_fd, target_status *status) {
   int cfd;
   struct sockaddr_in sa;
   socklen_t slen = sizeof(sa);
 
-  cfd = accept(ctx->serversock, (struct sockaddr*)&sa, &slen);
-  if (cfd == -1) {
-    ERR("accept() failed");
-    return -1;
-  }    
+  if (client_fd == NULL || target_fd == NULL || status == NULL) return -1;
 
-  // connect to the target and check if the operation is still in progress
-  int status = -1;
-  int tfd = tcp_conn_start(target->addr, target->port, &status);
-  if (tfd == -1) {
-    ERR("Connection to target failed");
+  cfd = accept(ctx->serversock, (struct sockaddr*)&sa, &slen);
+  if (cfd < 0) {
+    ERR("unable to accept client");
+    return -1;
+  }
+
+  if (ctx->numclients >= MAX_CLIENTS) {
+    close(cfd);
+    errno = EMFILE;
+    return -1;
+  }
+
+  if (socket_set_non_block(cfd) == -1) {
     close(cfd);
     return -1;
   }
 
-  int i = ctx->numclients;
-  ctx->clients[i] = cfd;
-  ctx->targets[i] = tfd;
-  ctx->t_status[i] = status;
-  ctx->numclients++;
+  // connect to the target and check if the operation is still in progress
+  int conn_status = -1;
+  int tfd = tcp_conn_start(target->addr, target->port, &conn_status);
+  if (tfd == -1) {
+    ERR("connection to target failed");
+    close(cfd);
+    return -1;
+  }
 
-  return cfd;
-}
-
-/* It closes both the client and target sockets, and removed their value from the context. */
-void close_session(int idx) {
-  close(ctx->clients[idx]);
-  close(ctx->targets[idx]);
-
-  int last = ctx->numclients - 1;
-  ctx->clients[idx] = ctx->clients[last];
-  ctx->targets[idx] = ctx->targets[last];
-  ctx->t_status[idx] = ctx->t_status[last];
-  ctx->clients[last] = 0;
-  ctx->targets[last] = 0;
-  ctx->t_status[last] = 0;
-  ctx->numclients--;
+  *client_fd = cfd;
+  *target_fd = tfd;
+  *status = conn_status;
+  return 0;
 }

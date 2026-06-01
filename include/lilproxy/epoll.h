@@ -8,12 +8,15 @@
 #define MAX_EVENTS 128
 #define EP_BASE_EVENTS (EPOLLRDHUP | EPOLLHUP | EPOLLERR)
 
-typedef struct _RELAY_CTX {
- int idx;
- int srcfd;
- int dstfd;
- endpoint_role role;
-} relay_ctx;
+typedef enum _FD_KIND {
+  FD_UNUSED = 0,
+  FD_LISTENER_TCP,
+  FD_LISTENER_CMD,
+  FD_STDIN,
+  FD_PROXY_CLIENT,
+  FD_PROXY_TARGET,
+  FD_CMD_CLIENT
+} fd_kind;
 
 int epoll_init();
 void handle_events(int epfd, struct epoll_event *evts, int ne);
