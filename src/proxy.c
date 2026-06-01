@@ -44,8 +44,9 @@ appConfig *new_config() {
 /* Initialize the proxy context to default values. */
 int init_listeners() {
   ctx->numclients = 0;  
-  ctx->serversock = server_init(cfg->l_port); 
-
+  ctx->serversock = server_init();
+  ctx->commandsock = command_sock_init();
+  
   if (ctx->serversock == -1) {
     ERR("unable to create server socket");
     return -1;
@@ -96,7 +97,7 @@ int setup_app(int argc, char *argv[]) {
   Send data received from src to dst. It handles partial writes by looping untile all bytes have been sent. 
   Returns -1 on disconnections/errors, 0 otherwise.
 */
-int relay_once(int src, int dst, int sender) {
+int relay_once(int src, int dst, endpoint_role sender) {
   unsigned char buf[MAX_READ_SIZE];
   int n = read(src, buf, sizeof(buf)-1);
   

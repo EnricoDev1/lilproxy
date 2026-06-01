@@ -13,6 +13,11 @@
 #include <lilproxy/state.h>
 #include <lilproxy/types.h>
 
+struct commandEntry {
+  char *name;
+  void (*callback)(void);
+};
+
 static struct commandEntry commands[MAX_COMMANDS];
 static int commands_len = 0;
 
