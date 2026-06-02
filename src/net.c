@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -10,6 +11,7 @@
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 #include <sys/un.h>
+#include <sys/stat.h>
 
 #include <lilproxy/net.h>
 #include <lilproxy/state.h>
@@ -49,6 +51,23 @@ int server_init() {
   return sfd;
 }
 
+static char *setup_runtime_path() {
+  char *runtime_path = malloc(255);
+  char *runtime_dir = getenv("XDG_RUNTIME_DIR");
+
+  if (runtime_dir == NULL) {
+    struct stat st = {0};
+    sprintf(runtime_path, "%s", "/run/lilproxy/lilproxy.sock");
+    if (stat("/run/lilproxy", &st) == -1) {
+      mkdir("/run/lilproxy", 0600);
+    }
+  } else {
+    sprintf(runtime_path, "%s/lilproxy.sock", runtime_dir);
+  }
+
+  return runtime_path;
+}
+
 /* Init the UNIX socket server and return the assigned file descriptor */
 int command_sock_init() {
   int sfd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -60,17 +79,23 @@ int command_sock_init() {
   struct sockaddr_un sa;
   memset(&sa, 0, sizeof(sa));
   
-  sa.sun_family = AF_UNIX;
-  strcpy(sa.sun_path, "/tmp/lilproxy.sock");
-
-  if (unlink("/tmp/lilproxy.sock") == -1 && errno != ENOENT) {
+  sa.sun_family = AF_UNIX;  
+  char *runtime_path = setup_runtime_path();
+  sprintf(sa.sun_path, "%s", runtime_path);
+  
+  if (unlink(runtime_path) == -1 && errno != ENOENT) {
     ERR("unable to unlink old command socket");
     close(sfd);
     return -1;
   }
-
+  
   if (bind_and_listen((struct sockaddr *)&sa, sizeof(sa), sfd)) return -1;
     
+  if (chmod(runtime_path, 0600) == -1) {
+    ERR("failed to set permissions on %s", runtime_path);
+    return -1;
+  }
+  
   return sfd;
 }
 
